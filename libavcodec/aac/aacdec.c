@@ -2005,7 +2005,8 @@ static int decode_fill(AACDecContext *ac, GetBitContext *gb, int len) {
         av_log(ac->avctx, AV_LOG_DEBUG, "FILL:%s\n", buf);
 
     if (sscanf(buf, "libfaac %d.%d", &major, &minor) == 2){
-        ac->avctx->internal->skip_samples = 1024;
+        if (!ac->avctx->internal->skip_samples)
+            ac->avctx->internal->skip_samples = 1024;
     }
 
 unknown:
@@ -2479,6 +2480,11 @@ static int decode_frame_ga(AVCodecContext *avctx, AACDecContext *ac,
     if (!ac->frame->data[0] && samples) {
         av_log(avctx, AV_LOG_ERROR, "no frame data found\n");
         return AVERROR_INVALIDDATA;
+    }
+
+    if (ac->oc[1].m4ac.sbr == 1 && !ac->sbr_delay_added) {
+        ac->avctx->internal->skip_samples += 962;
+        ac->sbr_delay_added = 1;
     }
 
     if (samples) {
