@@ -517,7 +517,7 @@ static int put_audio_specific_config(AVCodecContext *avctx, int chcfg)
         put_bits(&pb, 11, 0x2b7); // sync extension
         put_bits(&pb, 5,  AOT_SBR);
         put_bits(&pb, 1,  1); // sbrPresentFlag = 1
-        put_bits(&pb, 4,  s->sbr_ctx->fullSampleRateIdx);
+        put_bits(&pb, 4,  s->sbr_ctx->full_sample_rate_idx);
 
         if (s->channels == 1) {
             // Explicitly signal PS is NOT present for mono HE-AAC v1
@@ -1897,7 +1897,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         s->sbr_ctx = ff_aac_sbr_enc_init(s->channels, full_rate, avctx->bit_rate);
         if (!s->sbr_ctx)
             return AVERROR(ENOMEM);
-        s->sbr_ctx->fullSampleRateIdx = full_rate_idx;
+        s->sbr_ctx->full_sample_rate_idx = full_rate_idx;
     } else {
         for (int i = 0;; i++) {
             av_assert1(i < 13);

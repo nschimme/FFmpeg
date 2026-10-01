@@ -58,52 +58,52 @@ typedef enum SbrFrameClass {
 } SbrFrameClass;
 
 typedef struct SignalAnalysisChannel {
-    int   transientSlot;
-    float transientStrength;
+    int   transient_slot;
+    float transient_strength;
 } SignalAnalysisChannel;
 
 typedef struct SignalAnalysis {
-    int numSlots;
+    int num_slots;
     int sampled;
 
-    SbrFrameClass frameClass;
-    int numEnvelopes;
-    int tEnv[SBR_MAX_ENVELOPES + 1];
-    int bsPointer;
-    int envSampled[SBR_MAX_ENVELOPES];
+    SbrFrameClass frame_class;
+    int num_envelopes;
+    int t_env[SBR_MAX_ENVELOPES + 1];
+    int bs_pointer;
+    int env_sampled[SBR_MAX_ENVELOPES];
 
     SignalAnalysisChannel ch[16];
-    float bandE[16][SBR_MAX_ENVELOPES][SBR_QMF_BANDS_64];
+    float band_e[16][SBR_MAX_ENVELOPES][SBR_QMF_BANDS_64];
 } SignalAnalysis;
 
 typedef struct SBRChannel {
-    float qmfOvl64[SBR_QMF_HIST_LEN];
+    float qmf_ovl64[SBR_QMF_HIST_LEN];
 } SBRChannel;
 
 typedef struct SbrFrameData {
-    int numEnvelopes;
+    int num_envelopes;
     int eff_amp_res;
-    SbrFrameClass frameClass;
-    int tEnv[SBR_MAX_ENVELOPES + 1];
-    int bsPointer;
-    int freqRes;
+    SbrFrameClass frame_class;
+    int t_env[SBR_MAX_ENVELOPES + 1];
+    int bs_pointer;
+    int freq_res;
     struct {
-        int envData[SBR_MAX_ENVELOPES][SBR_MAX_BANDS];
+        int env_data[SBR_MAX_ENVELOPES][SBR_MAX_BANDS];
     } ch[16];
 } SbrFrameData;
 
 typedef struct SBRInfo {
-    int sbrPresent;
-    int frameCount;
-    int numChannels;
-    int sampleRate;
+    int sbr_present;
+    int frame_count;
+    int num_channels;
+    int sample_rate;
 
     int kx;
     int k2;
-    int numBands;
-    int bandEdges[SBR_MAX_BANDS + 1];
-    int numBandsLow;
-    int bandEdgesLow[SBR_MAX_BANDS + 1];
+    int num_bands;
+    int band_edges[SBR_MAX_BANDS + 1];
+    int num_bands_low;
+    int band_edges_low[SBR_MAX_BANDS + 1];
 
     int bs_freq_res;
     int bs_start_freq;
@@ -111,39 +111,39 @@ typedef struct SBRInfo {
     int bs_xover_band;
     int bs_alter_scale;
     int bs_freq_scale;
-    int numEnvFixFix;
+    int num_env_fixfix;
 
-    int headerDecided;
-    int sendHeaderThisFrame;
+    int header_decided;
+    int send_header_this_frame;
 
     SBRChannel ch[16];
 
-    float twidCos[SBR_QMF_BANDS_64];
-    float twidSin[SBR_QMF_BANDS_64];
-    float oddCos [SBR_QMF_BANDS_64];
-    float oddSin [SBR_QMF_BANDS_64];
+    float twid_cos[SBR_QMF_BANDS_64];
+    float twid_sin[SBR_QMF_BANDS_64];
+    float odd_cos [SBR_QMF_BANDS_64];
+    float odd_sin [SBR_QMF_BANDS_64];
 } SBRInfo;
 
 typedef struct AACSBREncContext {
-    int fullSampleRate;
-    int fullSampleRateIdx;
-    SBRInfo *sbrInfo;
+    int full_sample_rate;
+    int full_sample_rate_idx;
+    SBRInfo *sbr_info;
 
     AVTXContext *fft_ctx;
     av_tx_fn fft_fn;
 
-    SignalAnalysis signalAnalysis;
-    SbrFrameData frameFIFO[SBR_FRAME_FIFO];
-    int frameHead;
+    SignalAnalysis signal_analysis;
+    SbrFrameData frame_fifo[SBR_FRAME_FIFO];
+    int frame_head;
 } AACSBREncContext;
 
-AACSBREncContext *ff_aac_sbr_enc_init(int channels, int sampleRate, int64_t bitRate);
-void ff_aac_sbr_enc_close(AACSBREncContext *sCtx);
+AACSBREncContext *ff_aac_sbr_enc_init(int channels, int sample_rate, int64_t bit_rate);
+void ff_aac_sbr_enc_close(AACSBREncContext *s_ctx);
 
-void ff_aac_sbr_enc_process_frame(AACSBREncContext *sCtx, int numChannels, const int *isLfe,
-                                  int frameLen, float **inputSamples, float **coreSamples);
+void ff_aac_sbr_enc_process_frame(AACSBREncContext *s_ctx, int num_channels, const int *is_lfe,
+                                  int frame_len, float **input_samples, float **core_samples);
 
-int ff_aac_sbr_enc_write_payload(AACSBREncContext *sCtx, PutBitContext *pb,
+int ff_aac_sbr_enc_write_payload(AACSBREncContext *s_ctx, PutBitContext *pb,
                                  int elem_type, int ch0);
 
 #endif /* AVCODEC_AACENC_SBR_H */

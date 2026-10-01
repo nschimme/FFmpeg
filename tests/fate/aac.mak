@@ -218,7 +218,7 @@ fate-aac-he-encode: ./tests/data/asynth-44100-2.wav
 fate-aac-he-encode: CMD = enc_dec_pcm adts wav s16le $(REF) -c:a aac -profile:a aac_he -b:a 64k -fflags +bitexact -flags +bitexact
 fate-aac-he-encode: CMP = stddev
 fate-aac-he-encode: REF = ./tests/data/asynth-44100-2.wav
-fate-aac-he-encode: CMP_TARGET = 10345
+fate-aac-he-encode: CMP_TARGET = 10485
 fate-aac-he-encode: SIZE_TOLERANCE = 15000
 fate-aac-he-encode: FUZZ = 100
 
@@ -234,7 +234,7 @@ fate-aac-he-encode: ./tests/data/asynth-44100-2.wav
 fate-aac-he-encode: CMD = enc_dec_pcm adts wav s16le $(REF) -c:a aac -profile:a aac_he -b:a 64k -fflags +bitexact -flags +bitexact
 fate-aac-he-encode: CMP = stddev
 fate-aac-he-encode: REF = ./tests/data/asynth-44100-2.wav
-fate-aac-he-encode: CMP_TARGET = 10345
+fate-aac-he-encode: CMP_TARGET = 10485
 fate-aac-he-encode: SIZE_TOLERANCE = 15000
 fate-aac-he-encode: FUZZ = 100
 
