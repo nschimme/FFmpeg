@@ -518,6 +518,12 @@ static int put_audio_specific_config(AVCodecContext *avctx, int chcfg)
         put_bits(&pb, 5,  AOT_SBR);
         put_bits(&pb, 1,  1); // sbrPresentFlag = 1
         put_bits(&pb, 4,  s->sbr_ctx->fullSampleRateIdx);
+
+        if (s->channels == 1) {
+            // Explicitly signal PS is NOT present for mono HE-AAC v1
+            put_bits(&pb, 11, 0x548); // PS sync extension
+            put_bits(&pb, 1, 0);      // psPresentFlag = 0
+        }
     } else {
         put_bits(&pb, 5, s->profile+1); //profile
         put_bits(&pb, 4, s->samplerate_index); //sample rate index
