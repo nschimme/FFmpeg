@@ -1894,7 +1894,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
             return AVERROR(EINVAL);
         }
         s->samplerate_index = core_rate_idx;
-        s->sbr_ctx = ff_aac_sbr_enc_init(s->channels, full_rate, avctx->bit_rate);
+        s->sbr_ctx = ff_aac_sbr_enc_init(avctx, s->channels, full_rate, avctx->bit_rate);
         if (!s->sbr_ctx)
             return AVERROR(ENOMEM);
         s->sbr_ctx->full_sample_rate_idx = full_rate_idx;

@@ -29,7 +29,10 @@
 #include "avcodec.h"
 #include "put_bits.h"
 #include "aac.h"
+
+#include "aacsbrdata.h"
 #include "libavutil/tx.h"
+#include "libswresample/swresample.h"
 
 #define SBR_QMF_BANDS_64     64
 #define SBR_QMF_OVL_LEN_64   576
@@ -50,49 +53,49 @@
 #define LOOKAHEAD_DEPTH 2
 #define SBR_FRAME_FIFO (LOOKAHEAD_DEPTH + 2)
 
-typedef enum SbrFrameClass {
-    SBR_FRAME_CLASS_FIXFIX = 0,
-    SBR_FRAME_CLASS_FIXVAR = 1,
-    SBR_FRAME_CLASS_VARFIX = 2,
-    SBR_FRAME_CLASS_VARVAR = 3
-} SbrFrameClass;
+enum AACEncSBRFrameClass {
+    FIXFIX = 0,
+    FIXVAR = 1,
+    VARFIX = 2,
+    VARVAR = 3,
+};
 
-typedef struct SignalAnalysisChannel {
+typedef struct AACEncSignalAnalysisChannel {
     int   transient_slot;
     float transient_strength;
-} SignalAnalysisChannel;
+} AACEncSignalAnalysisChannel;
 
-typedef struct SignalAnalysis {
+typedef struct AACEncSignalAnalysis {
     int num_slots;
     int sampled;
 
-    SbrFrameClass frame_class;
+    int frame_class;
     int num_envelopes;
     int t_env[SBR_MAX_ENVELOPES + 1];
     int bs_pointer;
     int env_sampled[SBR_MAX_ENVELOPES];
 
-    SignalAnalysisChannel ch[16];
+    AACEncSignalAnalysisChannel ch[16];
     float band_e[16][SBR_MAX_ENVELOPES][SBR_QMF_BANDS_64];
-} SignalAnalysis;
+} AACEncSignalAnalysis;
 
-typedef struct SBRChannel {
+typedef struct AACEncSBRChannel {
     float qmf_ovl64[SBR_QMF_HIST_LEN];
-} SBRChannel;
+} AACEncSBRChannel;
 
-typedef struct SbrFrameData {
+typedef struct AACEncSBRFrameData {
     int num_envelopes;
     int eff_amp_res;
-    SbrFrameClass frame_class;
+    int frame_class;
     int t_env[SBR_MAX_ENVELOPES + 1];
     int bs_pointer;
     int freq_res;
     struct {
         int env_data[SBR_MAX_ENVELOPES][SBR_MAX_BANDS];
     } ch[16];
-} SbrFrameData;
+} AACEncSBRFrameData;
 
-typedef struct SBRInfo {
+typedef struct AACEncSBRInfo {
     int sbr_present;
     int frame_count;
     int num_channels;
@@ -116,34 +119,36 @@ typedef struct SBRInfo {
     int header_decided;
     int send_header_this_frame;
 
-    SBRChannel ch[16];
+    AACEncSBRChannel ch[16];
 
     float twid_cos[SBR_QMF_BANDS_64];
     float twid_sin[SBR_QMF_BANDS_64];
     float odd_cos [SBR_QMF_BANDS_64];
     float odd_sin [SBR_QMF_BANDS_64];
-} SBRInfo;
+} AACEncSBRInfo;
 
-typedef struct AACSBREncContext {
+typedef struct AACEncSBRContext {
     int full_sample_rate;
     int full_sample_rate_idx;
-    SBRInfo *sbr_info;
+    AACEncSBRInfo *sbr_info;
 
     AVTXContext *fft_ctx;
     av_tx_fn fft_fn;
 
-    SignalAnalysis signal_analysis;
-    SbrFrameData frame_fifo[SBR_FRAME_FIFO];
+    SwrContext *swr;
+
+    AACEncSignalAnalysis signal_analysis;
+    AACEncSBRFrameData frame_fifo[SBR_FRAME_FIFO];
     int frame_head;
-} AACSBREncContext;
+} AACEncSBRContext;
 
-AACSBREncContext *ff_aac_sbr_enc_init(int channels, int sample_rate, int64_t bit_rate);
-void ff_aac_sbr_enc_close(AACSBREncContext *s_ctx);
+AACEncSBRContext *ff_aac_sbr_enc_init(AVCodecContext *avctx, int channels, int sample_rate, int64_t bit_rate);
+void ff_aac_sbr_enc_close(AACEncSBRContext *s_ctx);
 
-void ff_aac_sbr_enc_process_frame(AACSBREncContext *s_ctx, int num_channels, const int *is_lfe,
+void ff_aac_sbr_enc_process_frame(AACEncSBRContext *s_ctx, int num_channels, const int *is_lfe,
                                   int frame_len, float **input_samples, float **core_samples);
 
-int ff_aac_sbr_enc_write_payload(AACSBREncContext *s_ctx, PutBitContext *pb,
+int ff_aac_sbr_enc_write_payload(AACEncSBRContext *s_ctx, PutBitContext *pb,
                                  int elem_type, int ch0);
 
 #endif /* AVCODEC_AACENC_SBR_H */

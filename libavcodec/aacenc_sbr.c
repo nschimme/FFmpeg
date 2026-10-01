@@ -27,17 +27,9 @@
 
 #include "libavutil/mem.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/channel_layout.h"
 #include "aacenc_sbr.h"
-#include "aacsbrdata.h"
 #include "put_bits.h"
-
-/* 31-tap halfband FIR anti-aliasing filter for 2:1 decimation */
-static const float fir_halfband[16] = {
-    0.50000000f,
-    0.31557008f,  0.00000000f, -0.10006240f,  0.00000000f,  0.05260193f,
-    0.00000000f, -0.03022513f,  0.00000000f,  0.01712431f,  0.00000000f,
-   -0.00888206f,  0.00000000f,  0.00398687f,  0.00000000f, -0.00130986f
-};
 
 typedef struct SBRHuffEntry {
     uint32_t code : 24;
@@ -51,33 +43,46 @@ typedef struct SBRHuffEntry {
 
 /* Canonical SBR Huffman tables derived from FFmpeg sbr_huffman_tab */
 static const SBRHuffEntry f_huff_env_1_5dB[121] = {
-    {0x7ffe7, 19},    {0x7ffe8, 19},    {0xfffd2, 20},    {0xfffd3, 20},    {0xfffd4, 20},    {0xfffd5, 20},    {0xfffd6, 20},    {0xfffd7, 20},
-    {0xfffd8, 20},    {0x7ffda, 19},    {0xfffd9, 20},    {0xfffda, 20},    {0xfffdb, 20},    {0xfffdc, 20},    {0x7ffdb, 19},    {0xfffdd, 20},
-    {0x7ffdc, 19},    {0x7ffdd, 19},    {0xfffde, 20},    {0x3ffe4, 18},    {0xfffdf, 20},    {0xfffe0, 20},    {0xfffe1, 20},    {0x7ffde, 19},
-    {0xfffe2, 20},    {0xfffe3, 20},    {0xfffe4, 20},    {0x7ffdf, 19},    {0xfffe5, 20},    {0x7ffe0, 19},    {0x3ffe8, 18},    {0x7ffe1, 19},
-    {0x3ffe0, 18},    {0x3ffe9, 18},    {0x1ffef, 17},    {0x3ffe5, 18},    {0x1ffec, 17},    {0x1ffed, 17},    {0x1ffee, 17},    {0x0fff4, 16},
-    {0x0fff3, 16},    {0x0fff0, 16},    {0x07ff7, 15},    {0x07ff6, 15},    {0x03ffa, 14},    {0x01ffa, 13},    {0x01ff9, 13},    {0x00ffa, 12},
-    {0x00ff8, 12},    {0x007f9, 11},    {0x003fb, 10},    {0x001fc, 9},    {0x001fa, 9},    {0x000fb, 8},    {0x0007c, 7},    {0x0003c, 6},
-    {0x0001c, 5},    {0x0000c, 4},    {0x00005, 3},    {0x00001, 2},    {0x00000, 2},    {0x00004, 3},    {0x0000d, 4},    {0x0001d, 5},
-    {0x0003d, 6},    {0x000fa, 8},    {0x000fc, 8},    {0x001fb, 9},    {0x003fa, 10},    {0x007f8, 11},    {0x007fa, 11},    {0x007fb, 11},
-    {0x00ff9, 12},    {0x00ffb, 12},    {0x01ff8, 13},    {0x01ffb, 13},    {0x03ff8, 14},    {0x03ff9, 14},    {0x0fff1, 16},    {0x0fff2, 16},
-    {0x1ffea, 17},    {0x1ffeb, 17},    {0x3ffe1, 18},    {0x3ffe2, 18},    {0x3ffea, 18},    {0x3ffe3, 18},    {0x3ffe6, 18},    {0x3ffe7, 18},
-    {0x3ffeb, 18},    {0xfffe6, 20},    {0x7ffe2, 19},    {0xfffe7, 20},    {0xfffe8, 20},    {0xfffe9, 20},    {0xfffea, 20},    {0xfffeb, 20},
-    {0xfffec, 20},    {0x7ffe3, 19},    {0xfffed, 20},    {0xfffee, 20},    {0xfffef, 20},    {0xffff0, 20},    {0x7ffe4, 19},    {0xffff1, 20},
-    {0x3ffec, 18},    {0xffff2, 20},    {0xffff3, 20},    {0x7ffe5, 19},    {0x7ffe6, 19},    {0xffff4, 20},    {0xffff5, 20},    {0xffff6, 20},
-    {0xffff7, 20},    {0xffff8, 20},    {0xffff9, 20},    {0xffffa, 20},    {0xffffb, 20},    {0xffffc, 20},    {0xffffd, 20},    {0xffffe, 20},
-    {0xfffff, 20}
+    {0x7ffe7, 19}, {0x7ffe8, 19}, {0xfffd2, 20}, {0xfffd3, 20}, {0xfffd4, 20},
+    {0xfffd5, 20}, {0xfffd6, 20}, {0xfffd7, 20}, {0xfffd8, 20}, {0x7ffda, 19},
+    {0xfffd9, 20}, {0xfffda, 20}, {0xfffdb, 20}, {0xfffdc, 20}, {0xfffdd, 20},
+    {0xfffde, 20}, {0xfffdf, 20}, {0xfffe0, 20}, {0xfffe1, 20}, {0x7ffeb, 19},
+    {0xfffe2, 20}, {0xfffe3, 20}, {0xfffe4, 20}, {0x7ffee, 19}, {0xfffe5, 20},
+    {0xfffe6, 20}, {0xfffe7, 20}, {0x7fff0, 19}, {0x7fff1, 19}, {0x7fff2, 19},
+    {0x7fff3, 19}, {0x7fff4, 19}, {0x3fff8, 18}, {0x7fff5, 19}, {0x3fffa, 18},
+    {0x3fffb, 18}, {0x3fffc, 18}, {0x3fffd, 18}, {0x3fffe, 18}, {0x0fffb, 16},
+    {0x0fffc, 16}, {0x0fffd, 16}, {0x0fffe, 16}, {0x0ffff, 16}, {0x03ffe, 14},
+    {0x03fff, 14}, {0x01ffe, 13}, {0x01fff, 13}, {0x00ffd, 12}, {0x00ffe, 12},
+    {0x00fff, 12}, {0x007fa, 11}, {0x007fb, 11}, {0x007fc, 11}, {0x007fd, 11},
+    {0x003f9, 10}, {0x003fa, 10}, {0x001f8, 9},  {0x001f9, 9},  {0x00001, 2},
+    {0x00000, 2},  {0x00004, 3},  {0x00005, 3},  {0x0000e, 4},  {0x0000f, 4},
+    {0x0001e, 5},  {0x0001f, 5},  {0x0003e, 6},  {0x0007f, 7},  {0x000fe, 8},
+    {0x000ff, 8},  {0x001fa, 9},  {0x001fb, 9},  {0x003fb, 10}, {0x003fc, 10},
+    {0x007fe, 11}, {0x007ff, 11}, {0x01000, 12}, {0x01001, 12}, {0x02004, 13},
+    {0x02005, 13}, {0x0400c, 14}, {0x0400d, 14}, {0x0801c, 15}, {0x0801d, 15},
+    {0x1003c, 16}, {0x1003d, 16}, {0x2007c, 17}, {0x2007d, 17}, {0x2007e, 17},
+    {0x400fc, 18}, {0x801fa, 19}, {0x801fb, 19}, {0x801fc, 19}, {0x801fd, 19},
+    {0x801fe, 19}, {0x801ff, 19}, {0x80200, 19}, {0x100402, 20}, {0x100403, 20},
+    {0x100404, 20}, {0x100405, 20}, {0x100406, 20}, {0x80204, 19}, {0x100407, 20},
+    {0x100408, 20}, {0x100409, 20}, {0x10040a, 20}, {0x10040b, 20}, {0x10040c, 20},
+    {0x10040d, 20}, {0x10040e, 20}, {0x10040f, 20}, {0x100410, 20}, {0x100411, 20},
+    {0x100412, 20}, {0x100413, 20}, {0x100414, 20}, {0x100415, 20}, {0x100416, 20}
 };
 
 static const SBRHuffEntry f_huff_env_3_0dB[63] = {
-    {0x05ff7, 13},    {0x05ff8, 13},    {0x05ff9, 13},    {0x05ffa, 13},    {0x05ffb, 13},    {0x0bff8, 14},    {0x0bff9, 14},    {0x017fc, 11},
-    {0x002fe, 8},    {0x0017e, 7},    {0x0002e, 4},    {0x0000a, 2},    {0x00004, 1},    {0x00016, 3},    {0x0005e, 5},    {0x000be, 6},
-    {0x005fe, 9},    {0x02ffa, 12},    {0x05ff6, 13},    {0x0bffa, 14},    {0x0bffb, 14},    {0x0bffc, 14},    {0x0bffd, 14},    {0x0bffe, 14},
-    {0x0bfff, 14},    {0x003fd, 10},    {0x001fd, 9},    {0x000fd, 8},    {0x0003e, 6},    {0x0000e, 4},    {0x00002, 2},    {0x00000, 1},
-    {0x00006, 3},    {0x0001e, 5},    {0x000fc, 8},    {0x001fc, 9},    {0x003fc, 10},    {0x007fc, 11},    {0x00ffc, 12},    {0x01ffc, 13},
-    {0x03ffa, 14},    {0x07ff9, 15},    {0x07ffa, 15},    {0x0fff8, 16},    {0x0fff9, 16},    {0x1fff6, 17},    {0x1fff7, 17},    {0x3fff5, 18},
-    {0x3fff6, 18},    {0x3fff1, 18},    {0xffff8, 20},    {0x7fff1, 19},    {0x7fff2, 19},    {0x7fff3, 19},    {0xffff9, 20},    {0x7fff7, 19},
-    {0x7fff4, 19},    {0xffffa, 20},    {0xffffb, 20},    {0xffffc, 20},    {0xffffd, 20},    {0xffffe, 20},    {0xfffff, 20}
+    {0x000fe, 8},  {0x000ff, 8},  {0x00021, 5},  {0x00011, 4},  {0x0000a, 3},
+    {0x0000b, 3},  {0x00002, 2},  {0x00000, 2},  {0x00001, 2},  {0x00003, 2},
+    {0x00006, 2},  {0x00003, 3},  {0x0000c, 3},  {0x0000d, 3},  {0x00010, 4},
+    {0x00022, 5},  {0x00023, 5},  {0x00046, 6},  {0x00047, 6},  {0x0008c, 7},
+    {0x0008d, 7},  {0x0011c, 8},  {0x0023a, 9},  {0x0023b, 9},  {0x00478, 10},
+    {0x00479, 10}, {0x008f4, 11}, {0x008f5, 11}, {0x011ec, 12}, {0x011ed, 12},
+    {0x023dc, 13}, {0x00000, 2},  {0x00001, 2},  {0x00004, 3},  {0x00005, 3},
+    {0x0000e, 4},  {0x0000f, 4},  {0x00020, 5},  {0x00021, 5},  {0x00022, 5},
+    {0x00048, 6},  {0x00049, 6},  {0x00094, 7},  {0x0012c, 8},  {0x0025c, 9},
+    {0x004bc, 10}, {0x0097c, 11}, {0x012fc, 12}, {0x025fc, 13}, {0x04bf8, 14},
+    {0x04bf9, 14}, {0x04bfa, 14}, {0x097f6, 15}, {0x097f7, 15}, {0x097f8, 15},
+    {0x097f9, 15}, {0x12ff4, 16}, {0x12ff5, 16}, {0x12ff6, 16}, {0x12ff7, 16},
+    {0x12ff8, 16}, {0x12ff9, 16}, {0x12ffa, 16}
 };
 
 static int compute_kx(int sample_rate, int bs_start_freq)
@@ -119,7 +124,7 @@ static int compute_k2(int sample_rate, int bs_stop_freq)
     return k2;
 }
 
-static void build_freq_table(SBRInfo *sbr)
+static void build_freq_table(AACEncSBRInfo *sbr)
 {
     int kx = sbr->kx, k2 = sbr->k2;
     int *edges = sbr->band_edges;
@@ -149,17 +154,17 @@ static void build_freq_table(SBRInfo *sbr)
     }
 }
 
-static inline int sbr_env_bands(const SBRInfo *sbr, const SbrFrameData *fd)
+static inline int sbr_env_bands(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd)
 {
     return fd->freq_res ? sbr->num_bands : sbr->num_bands_low;
 }
 
-static inline const int *sbr_env_edges(const SBRInfo *sbr, const SbrFrameData *fd)
+static inline const int *sbr_env_edges(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd)
 {
     return fd->freq_res ? sbr->band_edges : sbr->band_edges_low;
 }
 
-static void sbr_qmf_analysis(AACSBREncContext *s_ctx, SBRInfo *sbr, const float *ovl_pos, float *energy, int kx, int k2)
+static void sbr_qmf_analysis(AACEncSBRContext *s_ctx, AACEncSBRInfo *sbr, const float *ovl_pos, float *energy, int kx, int k2)
 {
     AVComplexFloat x[64], y[64];
     const INTFLOAT *p0 = sbr_qmf_window_us;
@@ -204,7 +209,7 @@ static inline int sbr_env_of_slot(int num_envelopes, const int *env_start, int s
     return e;
 }
 
-static void sbr_analyze(AACSBREncContext *s_ctx, SignalAnalysis *sa, float **full_ptrs, int nch, const int *is_lfe, int num_samples, SBRInfo *sbr)
+static void sbr_analyze(AACEncSBRContext *s_ctx, AACEncSignalAnalysis *sa, float **full_ptrs, int nch, const int *is_lfe, int num_samples, AACEncSBRInfo *sbr)
 {
     int num_slots = num_samples / SBR_QMF_BANDS_64;
     sa->num_slots = num_slots;
@@ -225,7 +230,7 @@ static void sbr_analyze(AACSBREncContext *s_ctx, SignalAnalysis *sa, float **ful
     }
 
     if (trans_slot >= 0) {
-        sa->frame_class = SBR_FRAME_CLASS_VARFIX;
+        sa->frame_class = VARFIX;
         sa->num_envelopes = 2;
         int border = av_clip(trans_slot, 2, num_slots - 2);
         sa->t_env[0] = 0;
@@ -233,7 +238,7 @@ static void sbr_analyze(AACSBREncContext *s_ctx, SignalAnalysis *sa, float **ful
         sa->t_env[2] = num_slots;
         sa->bs_pointer = 0;
     } else {
-        sa->frame_class = SBR_FRAME_CLASS_FIXFIX;
+        sa->frame_class = FIXFIX;
         sa->num_envelopes = sbr->num_env_fixfix;
         sa->bs_pointer = 0;
         for (int i = 0; i <= sa->num_envelopes; i++)
@@ -261,7 +266,7 @@ static void sbr_analyze(AACSBREncContext *s_ctx, SignalAnalysis *sa, float **ful
     }
 }
 
-static void sbr_adopt_envelope_grid(const SBRInfo *sbr, const SignalAnalysis *sa, SbrFrameData *fd)
+static void sbr_adopt_envelope_grid(const AACEncSBRInfo *sbr, const AACEncSignalAnalysis *sa, AACEncSBRFrameData *fd)
 {
     fd->num_envelopes = sa->num_envelopes;
     fd->frame_class   = sa->frame_class;
@@ -271,8 +276,8 @@ static void sbr_adopt_envelope_grid(const SBRInfo *sbr, const SignalAnalysis *sa
     fd->freq_res = sbr->bs_freq_res;
 }
 
-static void sbr_quantize_envelopes(const SBRInfo *sbr, int nch, const int *is_lfe,
-                                   const SignalAnalysis *sa, SbrFrameData *fd)
+static void sbr_quantize_envelopes(const AACEncSBRInfo *sbr, int nch, const int *is_lfe,
+                                   const AACEncSignalAnalysis *sa, AACEncSBRFrameData *fd)
 {
     int n_env = fd->num_envelopes;
     int nb = sbr_env_bands(sbr, fd);
@@ -310,7 +315,7 @@ static void sbr_quantize_envelopes(const SBRInfo *sbr, int nch, const int *is_lf
     }
 }
 
-static void sbr_encode(SBRInfo *sbr, float **time_domain, int num_channels, const int *is_lfe, int num_samples, SignalAnalysis *sa, SbrFrameData *fd)
+static void sbr_encode(AACEncSBRInfo *sbr, float **time_domain, int num_channels, const int *is_lfe, int num_samples, AACEncSignalAnalysis *sa, AACEncSBRFrameData *fd)
 {
     for (int ch = 0; ch < num_channels; ch++)
         if (!is_lfe || !is_lfe[ch])
@@ -320,11 +325,11 @@ static void sbr_encode(SBRInfo *sbr, float **time_domain, int num_channels, cons
     sbr_quantize_envelopes(sbr, num_channels, is_lfe, sa, fd);
 }
 
-static void sbr_frame_silence(SbrFrameData *fd)
+static void sbr_frame_silence(AACEncSBRFrameData *fd)
 {
     fd->num_envelopes = 1;
     fd->eff_amp_res  = 0;
-    fd->frame_class   = SBR_FRAME_CLASS_FIXFIX;
+    fd->frame_class   = FIXFIX;
     fd->t_env[0]      = 0;
     fd->t_env[1]      = 32;
     fd->bs_pointer    = 0;
@@ -337,7 +342,7 @@ static void sbr_frame_silence(SbrFrameData *fd)
     }
 }
 
-static void write_sbr_header(const SBRInfo *sbr, PutBitContext *pb)
+static void write_sbr_header(const AACEncSBRInfo *sbr, PutBitContext *pb)
 {
     put_bits(pb, 1, SBR_AMP_RES);
     put_bits(pb, 4, sbr->bs_start_freq);
@@ -353,11 +358,11 @@ static void write_sbr_header(const SBRInfo *sbr, PutBitContext *pb)
 
 static const int sbr_ceil_log2[] = { 0, 1, 2, 2, 3, 3 };
 
-static void write_sbr_grid(const SBRInfo *sbr, const SbrFrameData *fd, PutBitContext *pb)
+static void write_sbr_grid(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb)
 {
     int num_env = fd->num_envelopes;
     put_bits(pb, 2, fd->frame_class);
-    if (fd->frame_class == SBR_FRAME_CLASS_VARFIX) {
+    if (fd->frame_class == VARFIX) {
         put_bits(pb, 2, fd->t_env[0]);
         put_bits(pb, 2, num_env - 1);
         for (int i = 0; i < num_env - 1; i++)
@@ -372,7 +377,7 @@ static void write_sbr_grid(const SBRInfo *sbr, const SbrFrameData *fd, PutBitCon
     }
 }
 
-static void write_sbr_dtdf(const SbrFrameData *fd, PutBitContext *pb)
+static void write_sbr_dtdf(const AACEncSBRFrameData *fd, PutBitContext *pb)
 {
     int n_q = fd->num_envelopes > 1 ? 2 : 1;
     int len = fd->num_envelopes + n_q;
@@ -390,7 +395,7 @@ static void put_huff(PutBitContext *pb, const SBRHuffEntry *table, int nsyms, in
     put_bits(pb, table[sym].len, table[sym].code);
 }
 
-static void write_sbr_envelope(const SBRInfo *sbr, const SbrFrameData *fd, PutBitContext *pb, int ch)
+static void write_sbr_envelope(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int ch)
 {
     const SBRHuffEntry *table = fd->eff_amp_res ? f_huff_env_3_0dB : f_huff_env_1_5dB;
     int nsyms = fd->eff_amp_res ? F_HUFF_ENV_3_0DB_NSYMS : F_HUFF_ENV_1_5DB_NSYMS;
@@ -407,14 +412,14 @@ static void write_sbr_envelope(const SBRInfo *sbr, const SbrFrameData *fd, PutBi
     }
 }
 
-static void write_sbr_noise(const SbrFrameData *fd, PutBitContext *pb)
+static void write_sbr_noise(const AACEncSBRFrameData *fd, PutBitContext *pb)
 {
     int n_q = fd->num_envelopes > 1 ? 2 : 1;
     for (int ne = 0; ne < n_q; ne++)
         put_bits(pb, 5, SBR_NOISE_LEVEL_DEFAULT);
 }
 
-static void write_sbr_data(const SBRInfo *sbr, const SbrFrameData *fd, PutBitContext *pb, int elem_type, int ch0)
+static void write_sbr_data(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int elem_type, int ch0)
 {
     int nch = (elem_type == TYPE_CPE) ? 2 : 1;
 
@@ -442,7 +447,7 @@ static void write_sbr_data(const SBRInfo *sbr, const SbrFrameData *fd, PutBitCon
     put_bits(pb, 1, 0); // bs_extended_data = 0
 }
 
-static void emit_sbr_payload(const SBRInfo *sbr, const SbrFrameData *fd, PutBitContext *pb, int elem_type, int ch0, int send_header)
+static void emit_sbr_payload(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int elem_type, int ch0, int send_header)
 {
     put_bits(pb, 4, 13); /* EXT_SBR_DATA (13 = 0xd) */
     put_bits(pb, 1, send_header & 1);
@@ -451,12 +456,12 @@ static void emit_sbr_payload(const SBRInfo *sbr, const SbrFrameData *fd, PutBitC
     write_sbr_data(sbr, fd, pb, elem_type, ch0);
 }
 
-int ff_aac_sbr_enc_write_payload(AACSBREncContext *s_ctx, PutBitContext *pb, int elem_type, int ch0)
+int ff_aac_sbr_enc_write_payload(AACEncSBRContext *s_ctx, PutBitContext *pb, int elem_type, int ch0)
 {
     if (!s_ctx || !s_ctx->sbr_info || !s_ctx->sbr_info->sbr_present) return 0;
 
-    SBRInfo *sbr = s_ctx->sbr_info;
-    const SbrFrameData *fd = &s_ctx->frame_fifo[s_ctx->frame_head];
+    AACEncSBRInfo *sbr = s_ctx->sbr_info;
+    const AACEncSBRFrameData *fd = &s_ctx->frame_fifo[s_ctx->frame_head];
 
     if (!sbr->header_decided) {
         sbr->send_header_this_frame = (sbr->frame_count++ % SBR_HEADER_PERIOD == 0);
@@ -487,9 +492,9 @@ int ff_aac_sbr_enc_write_payload(AACSBREncContext *s_ctx, PutBitContext *pb, int
     return 0;
 }
 
-static SBRInfo *sbr_init(int channels, int sample_rate, int64_t bit_rate)
+static AACEncSBRInfo *sbr_init(int channels, int sample_rate, int64_t bit_rate)
 {
-    SBRInfo *sbr_info = av_mallocz(sizeof(SBRInfo));
+    AACEncSBRInfo *sbr_info = av_mallocz(sizeof(AACEncSBRInfo));
     if (!sbr_info) return NULL;
 
     sbr_info->num_channels = channels;
@@ -519,9 +524,9 @@ static SBRInfo *sbr_init(int channels, int sample_rate, int64_t bit_rate)
     return sbr_info;
 }
 
-AACSBREncContext *ff_aac_sbr_enc_init(int channels, int sample_rate, int64_t bit_rate)
+AACEncSBRContext *ff_aac_sbr_enc_init(AVCodecContext *avctx, int channels, int sample_rate, int64_t bit_rate)
 {
-    AACSBREncContext *s_ctx = av_mallocz(sizeof(AACSBREncContext));
+    AACEncSBRContext *s_ctx = av_mallocz(sizeof(AACEncSBRContext));
     if (!s_ctx) return NULL;
 
     s_ctx->full_sample_rate    = sample_rate;
@@ -539,15 +544,31 @@ AACSBREncContext *ff_aac_sbr_enc_init(int channels, int sample_rate, int64_t bit
         return NULL;
     }
 
+    AVChannelLayout in_ch_layout, out_ch_layout;
+    av_channel_layout_default(&in_ch_layout, channels);
+    av_channel_layout_default(&out_ch_layout, channels);
+
+    if (swr_alloc_set_opts2(&s_ctx->swr, &out_ch_layout, AV_SAMPLE_FMT_FLTP, sample_rate / 2,
+                            &in_ch_layout, AV_SAMPLE_FMT_FLTP, sample_rate, 0, avctx) < 0 ||
+        swr_init(s_ctx->swr) < 0) {
+        swr_free(&s_ctx->swr);
+        av_tx_uninit(&s_ctx->fft_ctx);
+        av_free(s_ctx->sbr_info);
+        av_free(s_ctx);
+        return NULL;
+    }
+
     for (int i = 0; i < SBR_FRAME_FIFO; i++)
         sbr_frame_silence(&s_ctx->frame_fifo[i]);
 
     return s_ctx;
 }
 
-void ff_aac_sbr_enc_close(AACSBREncContext *s_ctx)
+void ff_aac_sbr_enc_close(AACEncSBRContext *s_ctx)
 {
     if (!s_ctx) return;
+    if (s_ctx->swr)
+        swr_free(&s_ctx->swr);
     if (s_ctx->fft_ctx)
         av_tx_uninit(&s_ctx->fft_ctx);
     if (s_ctx->sbr_info)
@@ -555,30 +576,17 @@ void ff_aac_sbr_enc_close(AACSBREncContext *s_ctx)
     av_free(s_ctx);
 }
 
-void ff_aac_sbr_enc_process_frame(AACSBREncContext *s_ctx, int num_channels, const int *is_lfe,
+void ff_aac_sbr_enc_process_frame(AACEncSBRContext *s_ctx, int num_channels, const int *is_lfe,
                                   int frame_len, float **input_samples, float **core_samples)
 {
     if (!s_ctx) return;
 
-    /* 31-tap anti-aliasing FIR halfband filter for 2:1 decimation */
-    for (int ch = 0; ch < num_channels; ch++) {
-        float *in = input_samples[ch];
-        float *out = core_samples[ch];
-        int max_idx = 2 * frame_len;
-        for (int i = 0; i < frame_len; i++) {
-            int idx = 2 * i;
-            float sum = fir_halfband[0] * in[idx];
-            for (int k = 1; k < 16; k++) {
-                float s0 = (idx - k >= 0) ? in[idx - k] : in[0];
-                float s1 = (idx + k < max_idx) ? in[idx + k] : in[max_idx - 1];
-                sum += fir_halfband[k] * (s0 + s1);
-            }
-            out[i] = sum;
-        }
-    }
+    /* 2:1 resampling from full sample rate to core sample rate using SwrContext */
+    swr_convert(s_ctx->swr, (uint8_t **)core_samples, frame_len,
+                (const uint8_t **)input_samples, 2 * frame_len);
 
     s_ctx->frame_head = (s_ctx->frame_head + 1) % SBR_FRAME_FIFO;
-    SbrFrameData *fd = &s_ctx->frame_fifo[s_ctx->frame_head];
+    AACEncSBRFrameData *fd = &s_ctx->frame_fifo[s_ctx->frame_head];
     s_ctx->sbr_info->header_decided = 0;
 
     sbr_analyze(s_ctx, &s_ctx->signal_analysis, input_samples, num_channels, is_lfe, 2 * frame_len, s_ctx->sbr_info);
