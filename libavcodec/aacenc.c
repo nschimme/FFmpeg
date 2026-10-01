@@ -1875,7 +1875,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
 
     if (s->profile == AV_PROFILE_AAC_HE) {
         avctx->frame_size = 2048;
-        avctx->initial_padding = 2048;
+        avctx->initial_padding = 2064;
     }
 
     /* Samplerate */
