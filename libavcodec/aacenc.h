@@ -53,6 +53,16 @@ typedef enum AACCoder {
 /**
  * Predictor State
  */
+typedef struct PredictorState {
+    float cor0;
+    float cor1;
+    float var0;
+    float var1;
+    float r0;
+    float r1;
+    float k1;
+    float x_est;
+} PredictorState;
 
 
 typedef struct AACEncOptions {

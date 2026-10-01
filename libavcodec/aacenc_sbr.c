@@ -28,16 +28,117 @@
 #include "libavutil/mem.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/channel_layout.h"
+#include "libavutil/tx.h"
+#include "libswresample/swresample.h"
 #include "aacenc_sbr.h"
 #include "aacenctab.h"
+#include "aacsbrdata.h"
+#include "sbr.h"
 #include "put_bits.h"
 
-/* 31-tap halfband FIR anti-aliasing filter for 2:1 decimation */
-static const float fir_halfband[16] = {
-    0.50000000f,
-    0.31557008f,  0.00000000f, -0.10006240f,  0.00000000f,  0.05260193f,
-    0.00000000f, -0.03022513f,  0.00000000f,  0.01712431f,  0.00000000f,
-   -0.00888206f,  0.00000000f,  0.00398687f,  0.00000000f, -0.00130986f
+#define SBR_QMF_BANDS_64     64
+#define SBR_QMF_OVL_LEN_64   576
+#define SBR_QMF_HIST_LEN     (SBR_QMF_BANDS_64 + SBR_QMF_OVL_LEN_64)
+
+#define SBR_MAX_ENVELOPES    2
+#define SBR_MAX_BANDS        48
+#define SBR_HEADER_PERIOD    10
+
+#define SBR_AMP_RES          1
+#define SBR_INVF_MODE        0
+#define SBR_NOISE_LEVEL_DEFAULT 0
+#define SBR_ENV_DELTA_LIMIT_HIRES 12
+#define SBR_ENV_DELTA_LIMIT_LORES 24
+#define SBR_ENV_LEVEL_LOG2_OFFSET 6.0f
+#define SBR_LOG_ENERGY_FLOOR 1e-10f
+
+typedef struct SBRHuffEntry {
+    uint32_t code : 24;
+    uint32_t len  : 8;
+} SBRHuffEntry;
+
+typedef struct AACEncSignalAnalysisChannel {
+    int   transient_slot;
+    float transient_strength;
+} AACEncSignalAnalysisChannel;
+
+typedef struct AACEncSignalAnalysis {
+    int num_slots;
+    int sampled;
+
+    int frame_class;
+    int num_envelopes;
+    int t_env[SBR_MAX_ENVELOPES + 1];
+    int bs_pointer;
+    int env_sampled[SBR_MAX_ENVELOPES];
+
+    AACEncSignalAnalysisChannel ch[16];
+    float band_e[16][SBR_MAX_ENVELOPES][SBR_QMF_BANDS_64];
+} AACEncSignalAnalysis;
+
+typedef struct AACEncSBRChannel {
+    float qmf_ovl64[SBR_QMF_HIST_LEN];
+} AACEncSBRChannel;
+
+typedef struct AACEncSBRFrameData {
+    int num_envelopes;
+    int eff_amp_res;
+    int frame_class;
+    int t_env[SBR_MAX_ENVELOPES + 1];
+    int bs_pointer;
+    int freq_res;
+    struct {
+        int env_data[SBR_MAX_ENVELOPES][SBR_MAX_BANDS];
+    } ch[16];
+} AACEncSBRFrameData;
+
+typedef struct AACEncSBRInfo {
+    int sbr_present;
+    int frame_count;
+    int num_channels;
+    int sample_rate;
+
+    int kx;
+    int k2;
+    int num_bands;
+    int band_edges[SBR_MAX_BANDS + 1];
+    int num_bands_low;
+    int band_edges_low[SBR_MAX_BANDS + 1];
+
+    int bs_freq_res;
+    int bs_start_freq;
+    int bs_stop_freq;
+    int bs_xover_band;
+    int bs_alter_scale;
+    int bs_freq_scale;
+    int num_env_fixfix;
+
+    int header_decided;
+    int send_header_this_frame;
+
+    AACEncSBRChannel ch[16];
+
+    float twid_cos[SBR_QMF_BANDS_64];
+    float twid_sin[SBR_QMF_BANDS_64];
+    float odd_cos [SBR_QMF_BANDS_64];
+    float odd_sin [SBR_QMF_BANDS_64];
+} AACEncSBRInfo;
+
+struct AACEncSBRContext {
+    int full_sample_rate;
+    int full_sample_rate_idx;
+    AACEncSBRInfo *sbr_info;
+
+    AVTXContext *fft_ctx;
+    av_tx_fn fft_fn;
+
+    SwrContext *swr;
+
+    SBRHuffEntry huff_env_1_5dB[121];
+    SBRHuffEntry huff_env_3_0dB[63];
+
+    AACEncSignalAnalysis signal_analysis;
+    AACEncSBRFrameData cur_frame_data;
 };
 
 #define F_HUFF_ENV_1_5DB_OFFSET  60
@@ -330,8 +431,6 @@ static void write_sbr_header(const AACEncSBRInfo *sbr, PutBitContext *pb)
     put_bits(pb, 2, 0);
 }
 
-static const int sbr_ceil_log2[] = { 0, 1, 2, 2, 3, 3 };
-
 static void write_sbr_grid(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb)
 {
     int num_env = fd->num_envelopes;
@@ -341,7 +440,7 @@ static void write_sbr_grid(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *f
         put_bits(pb, 2, num_env - 1);
         for (int i = 0; i < num_env - 1; i++)
             put_bits(pb, 2, (fd->t_env[i + 1] - fd->t_env[i] - 2) / 2);
-        int ptr_len = sbr_ceil_log2[num_env];
+        int ptr_len = av_ceil_log2(num_env);
         put_bits(pb, ptr_len, fd->bs_pointer);
         for (int i = 0; i < num_env; i++)
             put_bits(pb, 1, sbr->bs_freq_res);
@@ -435,7 +534,7 @@ int ff_aac_sbr_enc_write_payload(AACEncSBRContext *s_ctx, PutBitContext *pb, int
     if (!s_ctx || !s_ctx->sbr_info || !s_ctx->sbr_info->sbr_present) return 0;
 
     AACEncSBRInfo *sbr = s_ctx->sbr_info;
-    const AACEncSBRFrameData *fd = &s_ctx->frame_fifo[s_ctx->frame_head];
+    const AACEncSBRFrameData *fd = &s_ctx->cur_frame_data;
 
     if (!sbr->header_decided) {
         sbr->send_header_this_frame = (sbr->frame_count++ % SBR_HEADER_PERIOD == 0);
@@ -541,8 +640,7 @@ AACEncSBRContext *ff_aac_sbr_enc_init(AVCodecContext *avctx, int channels, int s
     build_sbr_huff_table(s_ctx->huff_env_1_5dB, tab + off1, ff_aac_sbr_huffman_nb_codes[1]);
     build_sbr_huff_table(s_ctx->huff_env_3_0dB, tab + off5, ff_aac_sbr_huffman_nb_codes[5]);
 
-    for (int i = 0; i < SBR_FRAME_FIFO; i++)
-        sbr_frame_silence(&s_ctx->frame_fifo[i]);
+    sbr_frame_silence(&s_ctx->cur_frame_data);
 
     return s_ctx;
 }
@@ -568,10 +666,20 @@ void ff_aac_sbr_enc_process_frame(AACEncSBRContext *s_ctx, int num_channels, con
     swr_convert(s_ctx->swr, (uint8_t **)core_samples, frame_len,
                 (const uint8_t **)input_samples, 2 * frame_len);
 
-    s_ctx->frame_head = (s_ctx->frame_head + 1) % SBR_FRAME_FIFO;
-    AACEncSBRFrameData *fd = &s_ctx->frame_fifo[s_ctx->frame_head];
+    AACEncSBRFrameData *fd = &s_ctx->cur_frame_data;
     s_ctx->sbr_info->header_decided = 0;
 
     sbr_analyze(s_ctx, &s_ctx->signal_analysis, input_samples, num_channels, is_lfe, 2 * frame_len, s_ctx->sbr_info);
     sbr_encode(s_ctx->sbr_info, input_samples, num_channels, is_lfe, 2 * frame_len, &s_ctx->signal_analysis, fd);
+}
+
+int ff_aac_sbr_enc_get_full_rate_idx(const AACEncSBRContext *s_ctx)
+{
+    return s_ctx ? s_ctx->full_sample_rate_idx : 0;
+}
+
+void ff_aac_sbr_enc_set_full_rate_idx(AACEncSBRContext *s_ctx, int idx)
+{
+    if (s_ctx)
+        s_ctx->full_sample_rate_idx = idx;
 }
