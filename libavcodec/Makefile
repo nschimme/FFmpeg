@@ -206,7 +206,7 @@ OBJS-$(CONFIG_AAC_FIXED_DECODER)       += aactab.o \
 OBJS-$(CONFIG_AAC_ENCODER)             += aacenc.o aaccoder.o aacenctab.o    \
                                           aacpsy.o aactab.o aacencdsp.o \
                                           aacenc_is.o \
-                                          aacenc_tns.o aacsbr_enc.o \
+                                          aacenc_tns.o aacenc_sbr.o \
                                           psymodel.o kbdwin.o \
                                           mpeg4audio_sample_rates.o
 OBJS-$(CONFIG_AAC_MEDIACODEC_DECODER)  += mediacodecdec.o

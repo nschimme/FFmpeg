@@ -34,7 +34,7 @@
 
 #include "aac.h"
 #include "aacencdsp.h"
-#include "aacsbr_enc.h"
+#include "aacenc_sbr.h"
 #include "audio_frame_queue.h"
 #include "psymodel.h"
 

@@ -21,8 +21,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_AACSBR_ENC_H
-#define AVCODEC_AACSBR_ENC_H
+#ifndef AVCODEC_AACENC_SBR_H
+#define AVCODEC_AACENC_SBR_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -146,4 +146,4 @@ void ff_aac_sbr_enc_process_frame(AACSBREncContext *sCtx, int numChannels, const
 int ff_aac_sbr_enc_write_payload(AACSBREncContext *sCtx, PutBitContext *pb,
                                  int elem_type, int ch0);
 
-#endif /* AVCODEC_AACSBR_ENC_H */
+#endif /* AVCODEC_AACENC_SBR_H */

@@ -36,7 +36,7 @@ static const float fir_halfband[16] = {
 
 #include "libavutil/mem.h"
 #include "libavutil/mathematics.h"
-#include "aacsbr_enc.h"
+#include "aacenc_sbr.h"
 #include "aacsbrdata.h"
 #include "put_bits.h"
 
