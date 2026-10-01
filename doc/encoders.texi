@@ -624,8 +624,8 @@ decrease quality.
 
 libfaac AAC (Advanced Audio Coding) encoder wrapper using FAAC 2.0+ (2.2 ABI).
 
-FAAC is an open-source, dependency-free AAC encoder aimed at embedded and
-pipeline use cases where footprint and throughput matter as much as quality.
+FAAC is an open-source, dependency-free AAC encoder optimized for high-throughput
+pipeline encoding while offering excellent perceptual quality.
 
 Requires the presence of the libfaac headers and library during
 configuration. You need to explicitly configure the build with

@@ -321,8 +321,8 @@ Then pass @code{--enable-libvo-amrwbenc} to configure to enable it.
 @subsection FAAC library
 
 FFmpeg can make use of the FAAC library for AAC encoding.
-FAAC is an open-source, dependency-free AAC encoder aimed at embedded and
-pipeline use cases where footprint and throughput matter as much as quality.
+FAAC is an open-source, dependency-free AAC encoder optimized for high-throughput
+pipeline encoding while offering excellent perceptual quality.
 
 Go to @url{https://github.com/FreewareAdvancedAudio/faac} and follow the
 instructions for installing the library.
