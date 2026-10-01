@@ -29,61 +29,35 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/channel_layout.h"
 #include "aacenc_sbr.h"
+#include "aacenctab.h"
 #include "put_bits.h"
 
-typedef struct SBRHuffEntry {
-    uint32_t code : 24;
-    uint32_t len  : 8;
-} SBRHuffEntry;
+/* 31-tap halfband FIR anti-aliasing filter for 2:1 decimation */
+static const float fir_halfband[16] = {
+    0.50000000f,
+    0.31557008f,  0.00000000f, -0.10006240f,  0.00000000f,  0.05260193f,
+    0.00000000f, -0.03022513f,  0.00000000f,  0.01712431f,  0.00000000f,
+   -0.00888206f,  0.00000000f,  0.00398687f,  0.00000000f, -0.00130986f
+};
 
 #define F_HUFF_ENV_1_5DB_OFFSET  60
 #define F_HUFF_ENV_1_5DB_NSYMS   121
 #define F_HUFF_ENV_3_0DB_OFFSET  31
 #define F_HUFF_ENV_3_0DB_NSYMS   63
 
-/* Canonical SBR Huffman tables derived from FFmpeg sbr_huffman_tab */
-static const SBRHuffEntry f_huff_env_1_5dB[121] = {
-    {0x7ffe7, 19}, {0x7ffe8, 19}, {0xfffd2, 20}, {0xfffd3, 20}, {0xfffd4, 20},
-    {0xfffd5, 20}, {0xfffd6, 20}, {0xfffd7, 20}, {0xfffd8, 20}, {0x7ffda, 19},
-    {0xfffd9, 20}, {0xfffda, 20}, {0xfffdb, 20}, {0xfffdc, 20}, {0xfffdd, 20},
-    {0xfffde, 20}, {0xfffdf, 20}, {0xfffe0, 20}, {0xfffe1, 20}, {0x7ffeb, 19},
-    {0xfffe2, 20}, {0xfffe3, 20}, {0xfffe4, 20}, {0x7ffee, 19}, {0xfffe5, 20},
-    {0xfffe6, 20}, {0xfffe7, 20}, {0x7fff0, 19}, {0x7fff1, 19}, {0x7fff2, 19},
-    {0x7fff3, 19}, {0x7fff4, 19}, {0x3fff8, 18}, {0x7fff5, 19}, {0x3fffa, 18},
-    {0x3fffb, 18}, {0x3fffc, 18}, {0x3fffd, 18}, {0x3fffe, 18}, {0x0fffb, 16},
-    {0x0fffc, 16}, {0x0fffd, 16}, {0x0fffe, 16}, {0x0ffff, 16}, {0x03ffe, 14},
-    {0x03fff, 14}, {0x01ffe, 13}, {0x01fff, 13}, {0x00ffd, 12}, {0x00ffe, 12},
-    {0x00fff, 12}, {0x007fa, 11}, {0x007fb, 11}, {0x007fc, 11}, {0x007fd, 11},
-    {0x003f9, 10}, {0x003fa, 10}, {0x001f8, 9},  {0x001f9, 9},  {0x00001, 2},
-    {0x00000, 2},  {0x00004, 3},  {0x00005, 3},  {0x0000e, 4},  {0x0000f, 4},
-    {0x0001e, 5},  {0x0001f, 5},  {0x0003e, 6},  {0x0007f, 7},  {0x000fe, 8},
-    {0x000ff, 8},  {0x001fa, 9},  {0x001fb, 9},  {0x003fb, 10}, {0x003fc, 10},
-    {0x007fe, 11}, {0x007ff, 11}, {0x01000, 12}, {0x01001, 12}, {0x02004, 13},
-    {0x02005, 13}, {0x0400c, 14}, {0x0400d, 14}, {0x0801c, 15}, {0x0801d, 15},
-    {0x1003c, 16}, {0x1003d, 16}, {0x2007c, 17}, {0x2007d, 17}, {0x2007e, 17},
-    {0x400fc, 18}, {0x801fa, 19}, {0x801fb, 19}, {0x801fc, 19}, {0x801fd, 19},
-    {0x801fe, 19}, {0x801ff, 19}, {0x80200, 19}, {0x100402, 20}, {0x100403, 20},
-    {0x100404, 20}, {0x100405, 20}, {0x100406, 20}, {0x80204, 19}, {0x100407, 20},
-    {0x100408, 20}, {0x100409, 20}, {0x10040a, 20}, {0x10040b, 20}, {0x10040c, 20},
-    {0x10040d, 20}, {0x10040e, 20}, {0x10040f, 20}, {0x100410, 20}, {0x100411, 20},
-    {0x100412, 20}, {0x100413, 20}, {0x100414, 20}, {0x100415, 20}, {0x100416, 20}
-};
-
-static const SBRHuffEntry f_huff_env_3_0dB[63] = {
-    {0x000fe, 8},  {0x000ff, 8},  {0x00021, 5},  {0x00011, 4},  {0x0000a, 3},
-    {0x0000b, 3},  {0x00002, 2},  {0x00000, 2},  {0x00001, 2},  {0x00003, 2},
-    {0x00006, 2},  {0x00003, 3},  {0x0000c, 3},  {0x0000d, 3},  {0x00010, 4},
-    {0x00022, 5},  {0x00023, 5},  {0x00046, 6},  {0x00047, 6},  {0x0008c, 7},
-    {0x0008d, 7},  {0x0011c, 8},  {0x0023a, 9},  {0x0023b, 9},  {0x00478, 10},
-    {0x00479, 10}, {0x008f4, 11}, {0x008f5, 11}, {0x011ec, 12}, {0x011ed, 12},
-    {0x023dc, 13}, {0x00000, 2},  {0x00001, 2},  {0x00004, 3},  {0x00005, 3},
-    {0x0000e, 4},  {0x0000f, 4},  {0x00020, 5},  {0x00021, 5},  {0x00022, 5},
-    {0x00048, 6},  {0x00049, 6},  {0x00094, 7},  {0x0012c, 8},  {0x0025c, 9},
-    {0x004bc, 10}, {0x0097c, 11}, {0x012fc, 12}, {0x025fc, 13}, {0x04bf8, 14},
-    {0x04bf9, 14}, {0x04bfa, 14}, {0x097f6, 15}, {0x097f7, 15}, {0x097f8, 15},
-    {0x097f9, 15}, {0x12ff4, 16}, {0x12ff5, 16}, {0x12ff6, 16}, {0x12ff7, 16},
-    {0x12ff8, 16}, {0x12ff9, 16}, {0x12ffa, 16}
-};
+static void build_sbr_huff_table(SBRHuffEntry *out, const uint8_t (*tab)[2], int nb_codes)
+{
+    uint32_t code = 0;
+    for (int i = 0; i < nb_codes; i++) {
+        int sym = tab[i][0];
+        int len = tab[i][1];
+        if (len > 0) {
+            out[sym].code = code >> (32 - len);
+            out[sym].len  = len;
+            code += 1U << (32 - len);
+        }
+    }
+}
 
 static int compute_kx(int sample_rate, int bs_start_freq)
 {
@@ -395,9 +369,9 @@ static void put_huff(PutBitContext *pb, const SBRHuffEntry *table, int nsyms, in
     put_bits(pb, table[sym].len, table[sym].code);
 }
 
-static void write_sbr_envelope(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int ch)
+static void write_sbr_envelope(const AACEncSBRContext *s_ctx, const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int ch)
 {
-    const SBRHuffEntry *table = fd->eff_amp_res ? f_huff_env_3_0dB : f_huff_env_1_5dB;
+    const SBRHuffEntry *table = fd->eff_amp_res ? s_ctx->huff_env_3_0dB : s_ctx->huff_env_1_5dB;
     int nsyms = fd->eff_amp_res ? F_HUFF_ENV_3_0DB_NSYMS : F_HUFF_ENV_1_5DB_NSYMS;
     int offset = fd->eff_amp_res ? F_HUFF_ENV_3_0DB_OFFSET : F_HUFF_ENV_1_5DB_OFFSET;
     int first_bits = fd->eff_amp_res ? 6 : 7;
@@ -419,7 +393,7 @@ static void write_sbr_noise(const AACEncSBRFrameData *fd, PutBitContext *pb)
         put_bits(pb, 5, SBR_NOISE_LEVEL_DEFAULT);
 }
 
-static void write_sbr_data(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int elem_type, int ch0)
+static void write_sbr_data(const AACEncSBRContext *s_ctx, const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int elem_type, int ch0)
 {
     int nch = (elem_type == TYPE_CPE) ? 2 : 1;
 
@@ -437,7 +411,7 @@ static void write_sbr_data(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *f
     for (int ch = 0; ch < nch; ch++)
         write_sbr_invf(pb);
     for (int ch = 0; ch < nch; ch++)
-        write_sbr_envelope(sbr, fd, pb, ch0 + ch);
+        write_sbr_envelope(s_ctx, sbr, fd, pb, ch0 + ch);
     for (int ch = 0; ch < nch; ch++)
         write_sbr_noise(fd, pb);
 
@@ -447,13 +421,13 @@ static void write_sbr_data(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *f
     put_bits(pb, 1, 0); // bs_extended_data = 0
 }
 
-static void emit_sbr_payload(const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int elem_type, int ch0, int send_header)
+static void emit_sbr_payload(const AACEncSBRContext *s_ctx, const AACEncSBRInfo *sbr, const AACEncSBRFrameData *fd, PutBitContext *pb, int elem_type, int ch0, int send_header)
 {
     put_bits(pb, 4, 13); /* EXT_SBR_DATA (13 = 0xd) */
     put_bits(pb, 1, send_header & 1);
     if (send_header)
         write_sbr_header(sbr, pb);
-    write_sbr_data(sbr, fd, pb, elem_type, ch0);
+    write_sbr_data(s_ctx, sbr, fd, pb, elem_type, ch0);
 }
 
 int ff_aac_sbr_enc_write_payload(AACEncSBRContext *s_ctx, PutBitContext *pb, int elem_type, int ch0)
@@ -471,7 +445,7 @@ int ff_aac_sbr_enc_write_payload(AACEncSBRContext *s_ctx, PutBitContext *pb, int
     PutBitContext pb_tmp;
     uint8_t tmp_buf[1024];
     init_put_bits(&pb_tmp, tmp_buf, sizeof(tmp_buf));
-    emit_sbr_payload(sbr, fd, &pb_tmp, elem_type, ch0, sbr->send_header_this_frame);
+    emit_sbr_payload(s_ctx, sbr, fd, &pb_tmp, elem_type, ch0, sbr->send_header_this_frame);
     int payload_bits = put_bits_count(&pb_tmp);
 
     int fill_bytes = (payload_bits + 7) / 8;
@@ -485,7 +459,7 @@ int ff_aac_sbr_enc_write_payload(AACEncSBRContext *s_ctx, PutBitContext *pb, int
         put_bits(pb, 8, fill_bytes - 14);
     }
 
-    emit_sbr_payload(sbr, fd, pb, elem_type, ch0, sbr->send_header_this_frame);
+    emit_sbr_payload(s_ctx, sbr, fd, pb, elem_type, ch0, sbr->send_header_this_frame);
     if (pad_bits > 0)
         put_bits(pb, pad_bits, 0);
 
@@ -557,6 +531,15 @@ AACEncSBRContext *ff_aac_sbr_enc_init(AVCodecContext *avctx, int channels, int s
         av_free(s_ctx);
         return NULL;
     }
+
+    /* Build SBR Huffman encoder lookup tables from FFmpeg sbr_huffman_tab */
+    const uint8_t (*tab)[2] = ff_aac_sbr_huffman_tab;
+    int off1 = ff_aac_sbr_huffman_nb_codes[0];
+    int off5 = off1 + ff_aac_sbr_huffman_nb_codes[1] + ff_aac_sbr_huffman_nb_codes[2] +
+               ff_aac_sbr_huffman_nb_codes[3] + ff_aac_sbr_huffman_nb_codes[4];
+
+    build_sbr_huff_table(s_ctx->huff_env_1_5dB, tab + off1, ff_aac_sbr_huffman_nb_codes[1]);
+    build_sbr_huff_table(s_ctx->huff_env_3_0dB, tab + off5, ff_aac_sbr_huffman_nb_codes[5]);
 
     for (int i = 0; i < SBR_FRAME_FIFO; i++)
         sbr_frame_silence(&s_ctx->frame_fifo[i]);

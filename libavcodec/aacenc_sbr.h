@@ -29,7 +29,7 @@
 #include "avcodec.h"
 #include "put_bits.h"
 #include "aac.h"
-
+#include "sbr.h"
 #include "aacsbrdata.h"
 #include "libavutil/tx.h"
 #include "libswresample/swresample.h"
@@ -53,12 +53,17 @@
 #define LOOKAHEAD_DEPTH 2
 #define SBR_FRAME_FIFO (LOOKAHEAD_DEPTH + 2)
 
-enum AACEncSBRFrameClass {
+typedef enum AACEncSBRFrameClass {
     FIXFIX = 0,
     FIXVAR = 1,
     VARFIX = 2,
     VARVAR = 3,
-};
+} AACEncSBRFrameClass;
+
+typedef struct SBRHuffEntry {
+    uint32_t code : 24;
+    uint32_t len  : 8;
+} SBRHuffEntry;
 
 typedef struct AACEncSignalAnalysisChannel {
     int   transient_slot;
@@ -136,6 +141,9 @@ typedef struct AACEncSBRContext {
     av_tx_fn fft_fn;
 
     SwrContext *swr;
+
+    SBRHuffEntry huff_env_1_5dB[121];
+    SBRHuffEntry huff_env_3_0dB[63];
 
     AACEncSignalAnalysis signal_analysis;
     AACEncSBRFrameData frame_fifo[SBR_FRAME_FIFO];
