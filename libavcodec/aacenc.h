@@ -34,6 +34,7 @@
 
 #include "aac.h"
 #include "aacencdsp.h"
+#include "aacsbr_enc.h"
 #include "audio_frame_queue.h"
 #include "psymodel.h"
 
@@ -305,6 +306,7 @@ typedef struct AACEncContext {
 
     AACEncDSPContext aacdsp;
     AACNMRCurves *nmr;                            ///< NMR coder scratch (NULL unless coder == nmr)
+    AACSBREncContext *sbr_ctx;                    ///< SBR encoder context
 
     struct {
         float *samples;
