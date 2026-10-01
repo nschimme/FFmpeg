@@ -593,6 +593,13 @@ struct AACDecContext {
     int is_fixed;
 };
 
+/**
+ * SBR decoder QMF analysis/synthesis delay in output samples (2 * 481 = 962).
+ * ISO/IEC 14496-3 and AAC encoders (Apple, fdk-aac, faac) leave this delay
+ * out of MP4 container priming metadata; decoders add it when trimming gapless audio.
+ */
+#define SBR_DEC_DELAY 962
+
 #if defined(USE_FIXED) && USE_FIXED
 #define fdsp          RENAME_FIXED(fdsp)
 #endif

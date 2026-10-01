@@ -569,6 +569,8 @@ static av_cold void flush(AVCodecContext *avctx)
         }
     }
 
+    ac->sbr_delay_added = 0;
+
 #if CONFIG_AAC_DECODER
     ff_aac_usac_reset_state(ac, &ac->oc[1]);
 #endif
@@ -2483,7 +2485,7 @@ static int decode_frame_ga(AVCodecContext *avctx, AACDecContext *ac,
     }
 
     if (ac->oc[1].m4ac.sbr == 1 && !ac->sbr_delay_added) {
-        ac->avctx->internal->skip_samples += 962;
+        ac->avctx->internal->skip_samples += SBR_DEC_DELAY;
         ac->sbr_delay_added = 1;
     }
 
