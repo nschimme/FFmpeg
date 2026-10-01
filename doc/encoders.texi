@@ -619,6 +619,97 @@ Sets the maximum delay in milliseconds. Lower delays than 20ms will very quickly
 decrease quality.
 @end table
 
+@anchor{libfaac-enc}
+@section libfaac
+
+libfaac AAC (Advanced Audio Coding) encoder wrapper using FAAC 2.0+ (2.2 ABI).
+
+FAAC is an open-source, dependency-free AAC encoder optimized for high-throughput
+pipeline encoding while offering excellent perceptual quality.
+
+Requires the presence of the libfaac headers and library during
+configuration. You need to explicitly configure the build with
+@code{--enable-libfaac}.
+
+FAAC 2.0+ is licensed under the LGPLv2.1-or-later.
+
+@subsection Options
+
+The following private options are supported by the @option{libfaac} encoder:
+
+@table @option
+@item mpegversion
+Set the MPEG version.
+@table @option
+@item mpeg4
+MPEG-4 Audio.
+@item mpeg2
+MPEG-2 Audio.
+@end table
+Default is @samp{mpeg4}.
+
+@item object_type
+Set the AAC object type / profile.
+@table @option
+@item auto
+Auto profile selection.
+@item lc
+AAC Low Complexity (AAC-LC).
+@item he_aac_v1
+HE-AAC v1 (AAC-LC + SBR).
+@end table
+Default is @samp{auto}. Note that HE-AAC v1 requires MPEG-4.
+
+@item rate_control
+Set rate control mode.
+@table @option
+@item auto
+Auto rate control.
+@item vbr
+Variable bit rate (driven by @option{q} / @option{global_quality}).
+@item abr
+Average bit rate.
+@item cbr
+Constant bit rate.
+@end table
+Default is @samp{auto}.
+
+@item joint_mode
+Set joint stereo mode.
+@table @option
+@item none
+Independent L/R stereo.
+@item ms
+Mid/Side stereo.
+@item is
+Intensity stereo.
+@item mixed
+Per-band mix of M/S and Intensity.
+@end table
+Default is @samp{none}.
+
+@item short_control
+Set short block control mode.
+@table @option
+@item normal
+Let block switching decide.
+@item noshort
+Force long blocks only.
+@item nolong
+Force short blocks only.
+@end table
+Default is @samp{normal}.
+
+@item aac_tns / tns
+Enable or disable Temporal Noise Shaping (TNS). Default is 1 (enabled).
+
+@item aac_pns / pns
+Enable or disable Perceptual Noise Substitution (PNS). Default is 1 (enabled).
+
+@item max_bit_rate
+Set whole-stream peak bitrate ceiling in bits/s (0 = unlimited).
+@end table
+
 @anchor{libfdk-aac-enc}
 @section libfdk_aac
 

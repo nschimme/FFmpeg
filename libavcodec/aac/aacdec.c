@@ -2004,7 +2004,7 @@ static int decode_fill(AACDecContext *ac, GetBitContext *gb, int len) {
     if (ac->avctx->debug & FF_DEBUG_PICT_INFO)
         av_log(ac->avctx, AV_LOG_DEBUG, "FILL:%s\n", buf);
 
-    if (sscanf(buf, "libfaac %d.%d", &major, &minor) == 2){
+    if (sscanf(buf, "libfaac %d.%d", &major, &minor) == 2 && major < 2){
         ac->avctx->internal->skip_samples = 1024;
     }
 
