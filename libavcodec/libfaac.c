@@ -42,8 +42,8 @@ typedef struct FaacEncContext {
     int rate_control;     /* FAAC_RC_AUTO, FAAC_RC_VBR, FAAC_RC_ABR, FAAC_RC_CBR */
     int joint_mode;       /* FAAC_JOINT_NONE, FAAC_JOINT_MS, FAAC_JOINT_IS, FAAC_JOINT_MIXED */
     int short_control;    /* FAAC_SHORTCTL_NORMAL, FAAC_SHORTCTL_NOSHORT, FAAC_SHORTCTL_NOLONG */
-    int tns;              /* 1 / 0 */
-    int pns;              /* 1 / 0 */
+    int tns;              /* -1 = library default (true), 1, 0 */
+    int pns;              /* -1 = library default (true), 1, 0 */
     int max_bit_rate;     /* Whole-stream peak bitrate ceiling (0 = unlimited) */
 } FaacEncContext;
 
@@ -84,8 +84,10 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
     params.mpeg_version  = s->mpegversion;
     params.joint_mode    = s->joint_mode;
     params.short_control = s->short_control;
-    params.use_tns       = !!s->tns;
-    params.use_pns       = !!s->pns;
+    if (s->tns >= 0)
+        params.use_tns   = !!s->tns;
+    if (s->pns >= 0)
+        params.use_pns   = !!s->pns;
 
     params.use_lfe = (av_channel_layout_index_from_channel(&avctx->ch_layout,
                                                            AV_CHAN_LOW_FREQUENCY) >= 0);
@@ -285,7 +287,7 @@ static const AVOption faac_enc_options[] = {
         { "abr",  "Average bit rate",  0, AV_OPT_TYPE_CONST, { .i64 = FAAC_RC_ABR },  0, 0, AE, .unit = "rate_control" },
         { "cbr",  "Constant bit rate", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_RC_CBR },  0, 0, AE, .unit = "rate_control" },
 
-    { "joint_mode", "Joint stereo mode", OFFSET(joint_mode), AV_OPT_TYPE_INT, { .i64 = FAAC_JOINT_NONE }, FAAC_JOINT_NONE, FAAC_JOINT_MIXED, AE, .unit = "joint_mode" },
+    { "joint_mode", "Joint stereo mode", OFFSET(joint_mode), AV_OPT_TYPE_INT, { .i64 = FAAC_JOINT_MIXED }, FAAC_JOINT_NONE, FAAC_JOINT_MIXED, AE, .unit = "joint_mode" },
         { "none",  "Independent L/R stereo",           0, AV_OPT_TYPE_CONST, { .i64 = FAAC_JOINT_NONE },  0, 0, AE, .unit = "joint_mode" },
         { "ms",    "Mid/Side stereo",                  0, AV_OPT_TYPE_CONST, { .i64 = FAAC_JOINT_MS },    0, 0, AE, .unit = "joint_mode" },
         { "is",    "Intensity stereo",                 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_JOINT_IS },    0, 0, AE, .unit = "joint_mode" },
@@ -296,11 +298,11 @@ static const AVOption faac_enc_options[] = {
         { "noshort", "Force long blocks only",     0, AV_OPT_TYPE_CONST, { .i64 = FAAC_SHORTCTL_NOSHORT }, 0, 0, AE, .unit = "short_control" },
         { "nolong",  "Force short blocks only",    0, AV_OPT_TYPE_CONST, { .i64 = FAAC_SHORTCTL_NOLONG },  0, 0, AE, .unit = "short_control" },
 
-    { "aac_tns", "Temporal noise shaping", OFFSET(tns), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AE },
-    { "tns",     "Temporal noise shaping", OFFSET(tns), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AE },
+    { "aac_tns", "Temporal noise shaping", OFFSET(tns), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, AE },
+    { "tns",     "Temporal noise shaping", OFFSET(tns), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, AE },
 
-    { "aac_pns", "Perceptual noise substitution", OFFSET(pns), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AE },
-    { "pns",     "Perceptual noise substitution", OFFSET(pns), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AE },
+    { "aac_pns", "Perceptual noise substitution", OFFSET(pns), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, AE },
+    { "pns",     "Perceptual noise substitution", OFFSET(pns), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, AE },
 
     { "max_bit_rate", "Whole-stream peak bitrate ceiling in bits/s (0 = unlimited)", OFFSET(max_bit_rate), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, AE },
 
