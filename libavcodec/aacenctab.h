@@ -145,6 +145,11 @@ static const unsigned char aac_maxval_cb[] = {
 static const int aacenc_profiles[] = {
     AV_PROFILE_AAC_LOW,
     AV_PROFILE_MPEG2_AAC_LOW,
+    AV_PROFILE_AAC_HE,
 };
+
+extern const uint8_t ff_aac_sbr_huffman_tab[][2];
+extern const uint8_t ff_aac_sbr_huffman_nb_codes[];
+extern const int8_t ff_aac_sbr_vlc_offsets[];
 
 #endif /* AVCODEC_AACENCTAB_H */

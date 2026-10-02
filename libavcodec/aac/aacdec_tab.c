@@ -113,7 +113,7 @@ const VLCElem *ff_vlc_spectral[11];
 
 /// Huffman tables for SBR
 
-static const uint8_t sbr_huffman_tab[][2] = {
+const uint8_t ff_aac_sbr_huffman_tab[][2] = {
     /* t_huffman_env_1_5dB - 121 entries */
     {  60,   2 }, {  59,   2 }, {  61,   3 }, {  58,   3 }, {  62,   4 },
     {  57,   4 }, {  63,   5 }, {  56,   5 }, {  64,   6 }, {  55,   6 },
@@ -250,11 +250,11 @@ static const uint8_t sbr_huffman_tab[][2] = {
     {  20,   8 }, {  21,   8 }, {  22,   8 }, {  23,   8 }, {  24,   8 },
 };
 
-static const uint8_t sbr_huffman_nb_codes[] = {
+const uint8_t ff_aac_sbr_huffman_nb_codes[] = {
     121, 121, 49, 49, 63, 63, 25, 25, 63, 25
 };
 
-static const int8_t sbr_vlc_offsets[10] = {
+const int8_t ff_aac_sbr_vlc_offsets[10] = {
     -60, -60, -24, -24, -31, -31, -12, -12, -31, -12
 };
 
@@ -266,16 +266,16 @@ static av_cold void init_sbr_tables(void)
     static VLCElem vlc_buf[(1098 + 1092 + 768 + 1026 + 1058 +
                             1052 +  544 + 544 +  592 + 512)];
     VLCInitState state = VLC_INIT_STATE(vlc_buf);
-    const uint8_t (*tab)[2] = sbr_huffman_tab;
+    const uint8_t (*tab)[2] = ff_aac_sbr_huffman_tab;
 
     // SBR VLC table initialization
     for (int i = 0; i < FF_ARRAY_ELEMS(ff_aac_sbr_vlc); i++) {
         ff_aac_sbr_vlc[i] =
-            ff_vlc_init_tables_from_lengths(&state, 9, sbr_huffman_nb_codes[i],
+            ff_vlc_init_tables_from_lengths(&state, 9, ff_aac_sbr_huffman_nb_codes[i],
                                             &tab[0][1], 2,
                                             &tab[0][0], 2, 1,
-                                            sbr_vlc_offsets[i], 0);
-        tab += sbr_huffman_nb_codes[i];
+                                            ff_aac_sbr_vlc_offsets[i], 0);
+        tab += ff_aac_sbr_huffman_nb_codes[i];
     }
 }
 

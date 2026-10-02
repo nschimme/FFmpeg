@@ -502,20 +502,44 @@ static int put_audio_specific_config(AVCodecContext *avctx, int chcfg)
         return AVERROR(ENOMEM);
 
     init_put_bits(&pb, avctx->extradata, max_size);
-    put_bits(&pb, 5, s->profile+1); //profile
-    put_bits(&pb, 4, s->samplerate_index); //sample rate index
-    put_bits(&pb, 4, chcfg);
-    //GASpecificConfig
-    put_bits(&pb, 1, 0); //frame length - 1024 samples
-    put_bits(&pb, 1, 0); //does not depend on core coder
-    put_bits(&pb, 1, 0); //is not extension
-    if (s->needs_pce)
-        put_pce(&pb, avctx);
+    if (s->profile == AV_PROFILE_AAC_HE) {
+        put_bits(&pb, 5, 2); // AAC-LC profile
+        put_bits(&pb, 4, s->samplerate_index); // core sample rate index
+        put_bits(&pb, 4, chcfg);
+        // GASpecificConfig
+        put_bits(&pb, 1, 0); // frame length - 1024 samples
+        put_bits(&pb, 1, 0); // does not depend on core coder
+        put_bits(&pb, 1, 0); // is not extension
+        if (s->needs_pce)
+            put_pce(&pb, avctx);
 
-    //Explicitly Mark SBR absent
-    put_bits(&pb, 11, 0x2b7); //sync extension
-    put_bits(&pb, 5,  AOT_SBR);
-    put_bits(&pb, 1,  0);
+        // SBR extension
+        put_bits(&pb, 11, 0x2b7); // sync extension
+        put_bits(&pb, 5,  AOT_SBR);
+        put_bits(&pb, 1,  1); // sbrPresentFlag = 1
+        put_bits(&pb, 4,  ff_aac_sbr_enc_get_full_rate_idx(s->sbr_ctx));
+
+        if (s->channels == 1) {
+            // Explicitly signal PS is NOT present for mono HE-AAC v1
+            put_bits(&pb, 11, 0x548); // PS sync extension
+            put_bits(&pb, 1, 0);      // psPresentFlag = 0
+        }
+    } else {
+        put_bits(&pb, 5, s->profile+1); //profile
+        put_bits(&pb, 4, s->samplerate_index); //sample rate index
+        put_bits(&pb, 4, chcfg);
+        //GASpecificConfig
+        put_bits(&pb, 1, 0); //frame length - 1024 samples
+        put_bits(&pb, 1, 0); //does not depend on core coder
+        put_bits(&pb, 1, 0); //is not extension
+        if (s->needs_pce)
+            put_pce(&pb, avctx);
+
+        //Explicitly Mark SBR absent
+        put_bits(&pb, 11, 0x2b7); //sync extension
+        put_bits(&pb, 5,  AOT_SBR);
+        put_bits(&pb, 1,  0);
+    }
     flush_put_bits(&pb);
     avctx->extradata_size = put_bytes_output(&pb);
 
@@ -1196,22 +1220,32 @@ static void put_bitstream_info(AACEncContext *s, const char *name)
 static void copy_input_samples(AACEncContext *s, const AVFrame *frame)
 {
     int ch;
-    int end = 2048 + (frame ? frame->nb_samples : 0);
     const uint8_t *channel_map = s->reorder_map;
 
-    /* copy and remap input samples */
-    for (ch = 0; ch < s->channels; ch++) {
-        /* copy last 1024 samples of previous frame to the start of the current frame */
-        memcpy(&s->planar_samples[ch][1024], &s->planar_samples[ch][2048], 1024 * sizeof(s->planar_samples[0][0]));
-
-        /* copy new samples and zero any remaining samples */
-        if (frame) {
-            memcpy(&s->planar_samples[ch][2048],
-                   frame->extended_data[channel_map[ch]],
-                   frame->nb_samples * sizeof(s->planar_samples[0][0]));
+    if (s->profile == AV_PROFILE_AAC_HE) {
+        int end = 2048 + (frame ? frame->nb_samples : 0);
+        for (ch = 0; ch < s->channels; ch++) {
+            memcpy(&s->planar_samples[ch][0], &s->planar_samples[ch][2048], 2048 * sizeof(s->planar_samples[0][0]));
+            if (frame) {
+                memcpy(&s->planar_samples[ch][2048],
+                       frame->extended_data[channel_map[ch]],
+                       frame->nb_samples * sizeof(s->planar_samples[0][0]));
+            }
+            memset(&s->planar_samples[ch][end], 0,
+                   (6144 - end) * sizeof(s->planar_samples[0][0]));
         }
-        memset(&s->planar_samples[ch][end], 0,
-               (3072 - end) * sizeof(s->planar_samples[0][0]));
+    } else {
+        int end = 2048 + (frame ? frame->nb_samples : 0);
+        for (ch = 0; ch < s->channels; ch++) {
+            memcpy(&s->planar_samples[ch][1024], &s->planar_samples[ch][2048], 1024 * sizeof(s->planar_samples[0][0]));
+            if (frame) {
+                memcpy(&s->planar_samples[ch][2048],
+                       frame->extended_data[channel_map[ch]],
+                       frame->nb_samples * sizeof(s->planar_samples[0][0]));
+            }
+            memset(&s->planar_samples[ch][end], 0,
+                   (3072 - end) * sizeof(s->planar_samples[0][0]));
+        }
     }
 }
 
@@ -1243,6 +1277,19 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     if (!avctx->frame_num)
         return 0;
 
+    float *sbr_full_ptrs[16];
+    float core_samples_buf[16][2048];
+    float *sbr_core_ptrs[16];
+    int is_lfe_map[16] = {0};
+
+    if (s->profile == AV_PROFILE_AAC_HE) {
+        for (ch = 0; ch < s->channels; ch++) {
+            sbr_full_ptrs[ch] = &s->planar_samples[ch][2048];
+            sbr_core_ptrs[ch] = core_samples_buf[ch];
+        }
+        ff_aac_sbr_enc_process_frame(s->sbr_ctx, s->channels, is_lfe_map, 1024, sbr_full_ptrs, sbr_core_ptrs);
+    }
+
     start_ch = 0;
     for (i = 0; i < s->chan_map[0]; i++) {
         FFPsyWindowInfo* wi = windows + start_ch;
@@ -1270,9 +1317,15 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
             sce = &cpe->ch[ch];
             ics = &sce->ics;
             s->cur_channel = start_ch + ch;
-            overlap  = &samples[s->cur_channel][0];
-            samples2 = overlap + 1024;
-            la       = samples2 + (448+64);
+            if (s->profile == AV_PROFILE_AAC_HE) {
+                overlap  = &samples[s->cur_channel][0];
+                samples2 = core_samples_buf[s->cur_channel];
+                la       = samples2 + (448+64);
+            } else {
+                overlap  = &samples[s->cur_channel][0];
+                samples2 = overlap + 1024;
+                la       = samples2 + (448+64);
+            }
             if (!frame)
                 la = NULL;
             if (tag == TYPE_LFE) {
@@ -1612,6 +1665,15 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
         }
     }
 
+    if (s->sbr_ctx) {
+        start_ch = 0;
+        for (i = 0; i < s->chan_map[0]; i++) {
+            tag = s->chan_map[i+1];
+            chans = tag == TYPE_CPE ? 2 : 1;
+            ff_aac_sbr_enc_write_payload(s->sbr_ctx, &s->pb, tag, start_ch);
+            start_ch += chans;
+        }
+    }
     put_bits(&s->pb, 3, TYPE_END);
     flush_put_bits(&s->pb);
 
@@ -1670,6 +1732,8 @@ static av_cold int aac_encode_end(AVCodecContext *avctx)
     av_freep(&s->cpe);
     av_freep(&s->fdsp);
     av_freep(&s->nmr);
+    ff_aac_sbr_enc_close(s->sbr_ctx);
+    s->sbr_ctx = NULL;
     ff_af_queue_close(&s->afq);
     return 0;
 }
@@ -1696,12 +1760,13 @@ static av_cold int dsp_init(AVCodecContext *avctx, AACEncContext *s)
 static av_cold int alloc_buffers(AVCodecContext *avctx, AACEncContext *s)
 {
     int ch;
-    if (!FF_ALLOCZ_TYPED_ARRAY(s->buffer.samples, s->channels * 3 * 1024) ||
+    int buf_size = s->profile == AV_PROFILE_AAC_HE ? 6 * 1024 : 3 * 1024;
+    if (!FF_ALLOCZ_TYPED_ARRAY(s->buffer.samples, s->channels * buf_size) ||
         !FF_ALLOCZ_TYPED_ARRAY(s->cpe,            s->chan_map[0]))
         return AVERROR(ENOMEM);
 
     for(ch = 0; ch < s->channels; ch++)
-        s->planar_samples[ch] = s->buffer.samples + 3 * 1024 * ch;
+        s->planar_samples[ch] = s->buffer.samples + buf_size * ch;
 
     if (s->options.coder == AAC_CODER_NMR) {
         s->nmr = av_mallocz(sizeof(*s->nmr));
@@ -1793,12 +1858,53 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         }
     }
 
-    /* Samplerate */
-    for (int i = 0;; i++) {
-        av_assert1(i < 13);
-        if (avctx->sample_rate == ff_mpeg4audio_sample_rates[i]) {
-            s->samplerate_index = i;
+    /* Profile and option setting */
+    avctx->profile = avctx->profile == AV_PROFILE_UNKNOWN ? AV_PROFILE_AAC_LOW :
+                     avctx->profile;
+    for (i = 0; i < FF_ARRAY_ELEMS(aacenc_profiles); i++)
+        if (avctx->profile == aacenc_profiles[i])
             break;
+    ERROR_IF(i == FF_ARRAY_ELEMS(aacenc_profiles), "Profile not supported!\n");
+    if (avctx->profile == AV_PROFILE_MPEG2_AAC_LOW) {
+        avctx->profile = AV_PROFILE_AAC_LOW;
+        WARN_IF(s->options.pns,
+                "PNS unavailable in the \"mpeg2_aac_low\" profile, turning off\n");
+        s->options.pns = 0;
+    }
+    s->profile = avctx->profile;
+
+    if (s->profile == AV_PROFILE_AAC_HE) {
+        avctx->frame_size = 2048;
+        avctx->initial_padding = 2064;
+    }
+
+    /* Samplerate */
+    if (s->profile == AV_PROFILE_AAC_HE) {
+        int full_rate = avctx->sample_rate;
+        int core_rate = full_rate / 2;
+        int core_rate_idx = -1, full_rate_idx = -1;
+        for (int i = 0; i < 13; i++) {
+            if (core_rate == ff_mpeg4audio_sample_rates[i])
+                core_rate_idx = i;
+            if (full_rate == ff_mpeg4audio_sample_rates[i])
+                full_rate_idx = i;
+        }
+        if (core_rate_idx < 0 || full_rate_idx < 0) {
+            av_log(avctx, AV_LOG_ERROR, "Unsupported sample rate %d for HE-AAC\n", full_rate);
+            return AVERROR(EINVAL);
+        }
+        s->samplerate_index = core_rate_idx;
+        s->sbr_ctx = ff_aac_sbr_enc_init(avctx, s->channels, full_rate, avctx->bit_rate);
+        if (!s->sbr_ctx)
+            return AVERROR(ENOMEM);
+        ff_aac_sbr_enc_set_full_rate_idx(s->sbr_ctx, full_rate_idx);
+    } else {
+        for (int i = 0;; i++) {
+            av_assert1(i < 13);
+            if (avctx->sample_rate == ff_mpeg4audio_sample_rates[i]) {
+                s->samplerate_index = i;
+                break;
+            }
         }
     }
 
