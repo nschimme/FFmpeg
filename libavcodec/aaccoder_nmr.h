@@ -599,7 +599,7 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
 {
     const int cstep = NMR_COARSE > 0 ? NMR_COARSE : NMR_STEP;
     int bch = ((avctx->flags & AV_CODEC_FLAG_QSCALE) ? 2.0f : avctx->ch_layout.nb_channels);
-    int destbits = avctx->bit_rate * 1024.0 / avctx->sample_rate / bch * (lambda / 120.f) * chans;
+    int destbits = avctx->bit_rate * (double)avctx->frame_size / avctx->sample_rate / bch * (lambda / 120.f) * chans;
     int is8_any = 0;
     float lam;
     float rc_off = 1.0f, lam_dem = 0.0f;
@@ -612,11 +612,11 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
                    (lambda / (avctx->global_quality ? avctx->global_quality : 120)) * chans;
     if (rc_global && s->psy.bitres.alloc >= 0) {
         /* CBR target: nominal + repayment, bounded +-30%/frame */
-        double rr = avctx->bit_rate * 1024.0 / avctx->sample_rate;
+        double rr = avctx->bit_rate * (double)avctx->frame_size / avctx->sample_rate;
         destbits = (rr + av_clipd(s->nmr->rc_fill / 2.0, -0.3 * rr, 0.3 * rr)) * chans / s->channels;
     } else if (rc_eligible && s->psy.bitres.alloc >= 0) {
         /* pre-bootstrap CBR frames: target nominal (psy bitres is cold) */
-        destbits = (avctx->bit_rate * 1024.0 / avctx->sample_rate) * chans / s->channels;
+        destbits = (avctx->bit_rate * (double)avctx->frame_size / avctx->sample_rate) * chans / s->channels;
     }
     destbits = FFMIN(destbits, 5800 * chans);
     /* honest budget: subtract the measured non-trellis overhead (section data, ICS,
@@ -635,7 +635,7 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
     if (rc_global) {
         /* corridor bisect around the servoed centre; pressure = stateless
          * rc_off multiplier (folding it into lam_rc winds up) */
-        float R = avctx->bit_rate * 1024.0 / avctx->sample_rate;
+        float R = avctx->bit_rate * (double)avctx->frame_size / avctx->sample_rate;
         float cen;
         int tot, hardcap, rc_cap;
         float lo;
@@ -910,7 +910,7 @@ static void search_for_quantizers_nmr(AVCodecContext *avctx,
                       avctx->bit_rate_tolerance != 0;
     /* Signed reservoir; soft steering (bounded repay + rc_off), hard cap =
      * legality only. */
-    int rc_rate_frame = avctx->bit_rate * 1024.0 / avctx->sample_rate;
+    int rc_rate_frame = avctx->bit_rate * (double)avctx->frame_size / avctx->sample_rate;
     int rc_bmax = FFMIN(FFMAX(6144 * s->channels - rc_rate_frame, 256), NMR_CBR_BUF * s->channels);
 
     int rc_global, defer;

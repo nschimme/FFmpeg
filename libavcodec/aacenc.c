@@ -1223,16 +1223,30 @@ static void copy_input_samples(AACEncContext *s, const AVFrame *frame)
     const uint8_t *channel_map = s->reorder_map;
 
     if (s->profile == AV_PROFILE_AAC_HE) {
+        float *full_ptrs[16];
+        float *core_ptrs[16];
+        float core_tmp[16][1024];
         int end = 2048 + (frame ? frame->nb_samples : 0);
+
         for (ch = 0; ch < s->channels; ch++) {
-            memcpy(&s->planar_samples[ch][0], &s->planar_samples[ch][2048], 2048 * sizeof(s->planar_samples[0][0]));
+            memcpy(&s->full_samples[ch][0], &s->full_samples[ch][2048], 2048 * sizeof(s->full_samples[0][0]));
             if (frame) {
-                memcpy(&s->planar_samples[ch][2048],
+                memcpy(&s->full_samples[ch][2048],
                        frame->extended_data[channel_map[ch]],
-                       frame->nb_samples * sizeof(s->planar_samples[0][0]));
+                       frame->nb_samples * sizeof(s->full_samples[0][0]));
             }
-            memset(&s->planar_samples[ch][end], 0,
-                   (6144 - end) * sizeof(s->planar_samples[0][0]));
+            memset(&s->full_samples[ch][end], 0,
+                   (4096 - end) * sizeof(s->full_samples[0][0]));
+            full_ptrs[ch] = &s->full_samples[ch][2048];
+            core_ptrs[ch] = core_tmp[ch];
+        }
+
+        ff_aac_sbr_enc_resample(s->sbr_ctx, s->channels, 1024, full_ptrs, core_ptrs);
+
+        for (ch = 0; ch < s->channels; ch++) {
+            memcpy(&s->planar_samples[ch][0], &s->planar_samples[ch][1024], 1024 * sizeof(s->planar_samples[0][0]));
+            memcpy(&s->planar_samples[ch][1024], &s->planar_samples[ch][2048], 1024 * sizeof(s->planar_samples[0][0]));
+            memcpy(&s->planar_samples[ch][2048], core_tmp[ch], 1024 * sizeof(s->planar_samples[0][0]));
         }
     } else {
         int end = 2048 + (frame ? frame->nb_samples : 0);
@@ -1278,16 +1292,12 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
         return 0;
 
     float *sbr_full_ptrs[16];
-    float core_samples_buf[16][2048];
-    float *sbr_core_ptrs[16];
     int is_lfe_map[16] = {0};
 
     if (s->profile == AV_PROFILE_AAC_HE) {
-        for (ch = 0; ch < s->channels; ch++) {
-            sbr_full_ptrs[ch] = &s->planar_samples[ch][2048];
-            sbr_core_ptrs[ch] = core_samples_buf[ch];
-        }
-        ff_aac_sbr_enc_process_frame(s->sbr_ctx, s->channels, is_lfe_map, 1024, sbr_full_ptrs, sbr_core_ptrs);
+        for (ch = 0; ch < s->channels; ch++)
+            sbr_full_ptrs[ch] = &s->full_samples[ch][0];
+        ff_aac_sbr_enc_process_frame(s->sbr_ctx, s->channels, is_lfe_map, 1024, sbr_full_ptrs);
     }
 
     start_ch = 0;
@@ -1317,15 +1327,9 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
             sce = &cpe->ch[ch];
             ics = &sce->ics;
             s->cur_channel = start_ch + ch;
-            if (s->profile == AV_PROFILE_AAC_HE) {
-                overlap  = &samples[s->cur_channel][0];
-                samples2 = core_samples_buf[s->cur_channel];
-                la       = samples2 + (448+64);
-            } else {
-                overlap  = &samples[s->cur_channel][0];
-                samples2 = overlap + 1024;
-                la       = samples2 + (448+64);
-            }
+            overlap  = &samples[s->cur_channel][0];
+            samples2 = overlap + 1024;
+            la       = samples2 + (448+64);
             if (!frame)
                 la = NULL;
             if (tag == TYPE_LFE) {
@@ -1566,7 +1570,7 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
          * allow between the nominal bitrate, and what psy's bit reservoir says to target
          * but drift towards the nominal bitrate always
          */
-        rate_bits = avctx->bit_rate * 1024 / avctx->sample_rate;
+        rate_bits = avctx->bit_rate * avctx->frame_size / avctx->sample_rate;
         rate_bits = FFMIN(rate_bits, 6144 * s->channels - 3);
         too_many_bits = FFMAX(target_bits, rate_bits);
         too_many_bits = FFMIN(too_many_bits, 6144 * s->channels - 3);
@@ -1760,13 +1764,19 @@ static av_cold int dsp_init(AVCodecContext *avctx, AACEncContext *s)
 static av_cold int alloc_buffers(AVCodecContext *avctx, AACEncContext *s)
 {
     int ch;
-    int buf_size = s->profile == AV_PROFILE_AAC_HE ? 6 * 1024 : 3 * 1024;
-    if (!FF_ALLOCZ_TYPED_ARRAY(s->buffer.samples, s->channels * buf_size) ||
+    int core_size = 3 * 1024;
+    int full_size = s->profile == AV_PROFILE_AAC_HE ? 4096 : 0;
+    int total_ch_size = core_size + full_size;
+
+    if (!FF_ALLOCZ_TYPED_ARRAY(s->buffer.samples, s->channels * total_ch_size) ||
         !FF_ALLOCZ_TYPED_ARRAY(s->cpe,            s->chan_map[0]))
         return AVERROR(ENOMEM);
 
-    for(ch = 0; ch < s->channels; ch++)
-        s->planar_samples[ch] = s->buffer.samples + buf_size * ch;
+    for (ch = 0; ch < s->channels; ch++) {
+        s->planar_samples[ch] = s->buffer.samples + total_ch_size * ch;
+        if (s->profile == AV_PROFILE_AAC_HE)
+            s->full_samples[ch] = s->planar_samples[ch] + core_size;
+    }
 
     if (s->options.coder == AAC_CODER_NMR) {
         s->nmr = av_mallocz(sizeof(*s->nmr));

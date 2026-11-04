@@ -270,6 +270,7 @@ typedef struct AACEncContext {
     AVFloatDSPContext *fdsp;
     AACPCEInfo pce;                              ///< PCE data, if needed
     float *planar_samples[16];                   ///< saved preprocessed input
+    float *full_samples[16];                     ///< full rate samples buffer for HE-AAC
 
     int profile;                                 ///< copied from avctx
     int needs_pce;                               ///< flag for non-standard layout

@@ -47,10 +47,29 @@
 #define SBR_AMP_RES          1
 #define SBR_INVF_MODE        0
 #define SBR_NOISE_LEVEL_DEFAULT 0
-#define SBR_ENV_DELTA_LIMIT_HIRES 12
-#define SBR_ENV_DELTA_LIMIT_LORES 24
+#define SBR_ENV_DELTA_LIMIT_HIRES 31
+#define SBR_ENV_DELTA_LIMIT_LORES 60
 #define SBR_ENV_LEVEL_LOG2_OFFSET 6.0f
 #define SBR_LOG_ENERGY_FLOOR 1e-10f
+
+#define SBR_MIN_SPAN 4
+#define SBR_FOUR_ENV_BITRATE_BPS        17000u
+#define SBR_FREQ_SCALE_COARSE_BPS       12000u
+#define SBR_STOP_FREQ_MIN               0
+#define SBR_STOP_FREQ_MAX               13
+#define SBR_RICH_BPS                    20000u
+#define SBR_START_FREQ_DEFAULT          15
+#define SBR_START_FREQ_RICH             12
+#define SBR_TWO_REGION_MIN_RATE         44100
+#define SBR_TWO_REGION_MAX_RATE         48000
+#define SBR_ONE_REGION_NUM              22449
+#define SBR_ONE_REGION_DEN              10000
+#define SBR_TWO_REGION_RATIO            2.2449f
+#define SBR_UPPER_REGION_WARP           1.3f
+#define SBR_NARROW_STOP_BPS             10000u
+#define SBR_NARROW_STOP_MIN_RATE        32000
+#define SBR_STOP_FREQ_TARGET_NARROW_HZ  14000
+#define SBR_STOP_FREQ_TARGET_HZ         20000
 
 typedef struct SBRHuffEntry {
     uint32_t code : 24;
@@ -171,52 +190,83 @@ static int compute_kx(int sample_rate, int bs_start_freq)
 static int cmp_int_fn(const void *a, const void *b) { return *(const int *)a - *(const int *)b; }
 static int cmp_int16_fn(const void *a, const void *b) { return (int)(*(const int16_t *)a) - (int)(*(const int16_t *)b); }
 
-static int compute_k2(int sample_rate, int bs_stop_freq)
+static int max_sbr_span(int sample_rate)
 {
-    if (bs_stop_freq == 14 || bs_stop_freq == 15) return 64;
+    return (sample_rate <= 32000) ? 48 : (sample_rate <= 44100) ? 35 : 32;
+}
+
+static int pick_stop_freq(int sample_rate, int kx, int target_hz, int *k2_out)
+{
     int temp = (sample_rate < 32000) ? 3000 : (sample_rate < 64000) ? 4000 : 5000;
     int stop_min = ((temp << 8) + (sample_rate >> 1)) / sample_rate;
-    int k2;
-    if (bs_stop_freq < 14) {
-        int16_t stop_dk[13];
-        float prod = (float)stop_min;
-        int prev = stop_min;
-        float base = powf(64.0f / (float)stop_min, (float)(1.0f / 13.0f));
-        for (int i = 0; i < 12; i++) {
-            prod *= base;
-            int present = (int)lrintf(prod);
-            stop_dk[i] = (int16_t)(present - prev);
-            prev = present;
-        }
-        stop_dk[12] = (int16_t)(64 - prev);
-        qsort(stop_dk, 13, sizeof(int16_t), cmp_int16_fn);
-        k2 = stop_min;
-        for (int i = 0; i < bs_stop_freq; i++) k2 += stop_dk[i];
-    } else {
-        k2 = 64;
+    int16_t stop_dk[13];
+    float prod = (float)stop_min;
+    int prev = stop_min;
+    float base = powf(64.0f / (float)stop_min, (float)(1.0f / 13.0f));
+    for (int i = 0; i < 12; i++) {
+        prod *= base;
+        int present = (int)lrintf(prod);
+        stop_dk[i] = (int16_t)(present - prev);
+        prev = present;
     }
+    stop_dk[12] = (int16_t)(64 - prev);
+    qsort(stop_dk, 13, sizeof(int16_t), cmp_int16_fn);
 
-    return k2;
+    int two_region = sample_rate >= SBR_TWO_REGION_MIN_RATE && sample_rate <= SBR_TWO_REGION_MAX_RATE;
+    int best = SBR_STOP_FREQ_MIN, best_k2 = stop_min, k2 = stop_min;
+    for (int sf = SBR_STOP_FREQ_MIN; sf <= SBR_STOP_FREQ_MAX; sf++) {
+        if (sf > 0) k2 += stop_dk[sf - 1];
+        if ((!two_region && k2 * SBR_ONE_REGION_DEN > SBR_ONE_REGION_NUM * kx) || k2 - kx > max_sbr_span(sample_rate)) break;
+        best = sf;
+        best_k2 = k2;
+        if (k2 - kx >= SBR_MIN_SPAN && (int64_t)k2 * sample_rate / (2 * SBR_QMF_BANDS_64) >= target_hz) break;
+    }
+    *k2_out = best_k2;
+    return best;
+}
+
+static int build_log_band_widths(int k_start, int k_end, int bands_per_octave, float warp, int *vdk)
+{
+    int nb = 2 * (int)lrintf(bands_per_octave * log2f((float)k_end / (float)k_start) / (2.0f * warp));
+    nb = av_clip(nb, 1, SBR_MAX_BANDS);
+    int prev = k_start;
+    int i = 0;
+    do {
+        int cur = (int)lrintf(k_start * powf((float)k_end / (float)k_start, (float)(i + 1) / (float)nb));
+        vdk[i] = cur - prev;
+        prev = cur;
+    } while (++i < nb);
+    qsort(vdk, nb, sizeof(int), cmp_int_fn);
+    return nb;
 }
 
 static void build_freq_table(AACEncSBRInfo *sbr)
 {
     int kx = sbr->kx, k2 = sbr->k2;
     int *edges = sbr->band_edges;
-    int n_master;
-
-    int prev = kx;
     int bands_per_octave = 14 - 2 * sbr->bs_freq_scale;
-    n_master = 2 * (int)(bands_per_octave * log2f((float)k2 / (float)kx) / 2.0f + 0.5f);
-    n_master = av_clip(n_master, 1, SBR_MAX_BANDS);
-    for (int k = 0; k < n_master; k++) {
-        int edge = (int)(kx * powf((float)k2 / (float)kx, (float)(k + 1) / (float)n_master) + 0.5f);
-        edges[1 + k] = edge - prev;
-        prev = edge;
+    int two_region = (float)k2 / (float)kx > SBR_TWO_REGION_RATIO;
+    int k1 = two_region ? 2 * kx : k2;
+    int widths[2 * SBR_MAX_BANDS];
+    int n_master = build_log_band_widths(kx, k1, bands_per_octave, 1.0f, widths);
+
+    if (two_region) {
+        int *upper = widths + n_master;
+        float warp = sbr->bs_alter_scale ? SBR_UPPER_REGION_WARP : 1.0f;
+        int nb1 = build_log_band_widths(k1, k2, bands_per_octave, warp, upper);
+        if (upper[0] < widths[n_master - 1]) {
+            int change = widths[n_master - 1] - upper[0];
+            int half = (upper[nb1 - 1] - upper[0]) / 2;
+            if (change > half) change = half;
+            upper[0] += change;
+            upper[nb1 - 1] -= change;
+            qsort(upper, nb1, sizeof(int), cmp_int_fn);
+        }
+        n_master += nb1;
     }
-    qsort(edges + 1, n_master, sizeof(int), cmp_int_fn);
+
     edges[0] = kx;
-    for (int k = 1; k <= n_master; k++) edges[k] += edges[k - 1];
+    for (int i = 0; i < n_master; i++) edges[i + 1] = edges[i] + widths[i];
     sbr->num_bands = n_master;
 
     int n_low = (n_master + 1) >> 1;
@@ -574,16 +624,19 @@ static AACEncSBRInfo *sbr_init(int channels, int sample_rate, int64_t bit_rate)
     sbr_info->sample_rate  = sample_rate;
     sbr_info->sbr_present  = 1;
 
-    sbr_info->bs_freq_scale = 2;
-    sbr_info->bs_alter_scale = 1;
-    sbr_info->bs_start_freq = 5;
-    sbr_info->bs_stop_freq  = 0;
-    sbr_info->bs_xover_band = 0;
-    sbr_info->bs_freq_res   = 1;
-    sbr_info->num_env_fixfix   = 1;
+    int rate_per_ch = bit_rate > 0 ? (int)(bit_rate / channels) : 32000;
+    int rich = (rate_per_ch >= SBR_RICH_BPS);
+    sbr_info->num_env_fixfix = (rate_per_ch >= SBR_FOUR_ENV_BITRATE_BPS) ? 4 : 1;
+    sbr_info->bs_start_freq  = rich ? SBR_START_FREQ_RICH : SBR_START_FREQ_DEFAULT;
+    sbr_info->bs_freq_scale  = (rate_per_ch >= SBR_FREQ_SCALE_COARSE_BPS) ? 3 : 2;
+    sbr_info->bs_alter_scale = 0;
+    sbr_info->bs_xover_band  = 0;
+    sbr_info->bs_freq_res    = 1;
 
     sbr_info->kx = compute_kx(sample_rate, sbr_info->bs_start_freq);
-    sbr_info->k2 = compute_k2(sample_rate, sbr_info->bs_stop_freq);
+    int target_hz = (rate_per_ch < SBR_NARROW_STOP_BPS && sample_rate > SBR_NARROW_STOP_MIN_RATE) ?
+                    SBR_STOP_FREQ_TARGET_NARROW_HZ : SBR_STOP_FREQ_TARGET_HZ;
+    sbr_info->bs_stop_freq = pick_stop_freq(sample_rate, sbr_info->kx, target_hz, &sbr_info->k2);
 
     build_freq_table(sbr_info);
 
@@ -657,14 +710,18 @@ void ff_aac_sbr_enc_close(AACEncSBRContext *s_ctx)
     av_free(s_ctx);
 }
 
-void ff_aac_sbr_enc_process_frame(AACEncSBRContext *s_ctx, int num_channels, const int *is_lfe,
-                                  int frame_len, float **input_samples, float **core_samples)
+void ff_aac_sbr_enc_resample(AACEncSBRContext *s_ctx, int num_channels,
+                             int frame_len, float **input_samples, float **core_samples)
 {
-    if (!s_ctx) return;
-
-    /* 2:1 resampling from full sample rate to core sample rate using SwrContext */
+    if (!s_ctx || !s_ctx->swr) return;
     swr_convert(s_ctx->swr, (uint8_t **)core_samples, frame_len,
                 (const uint8_t **)input_samples, 2 * frame_len);
+}
+
+void ff_aac_sbr_enc_process_frame(AACEncSBRContext *s_ctx, int num_channels, const int *is_lfe,
+                                  int frame_len, float **input_samples)
+{
+    if (!s_ctx) return;
 
     AACEncSBRFrameData *fd = &s_ctx->cur_frame_data;
     s_ctx->sbr_info->header_decided = 0;

@@ -40,8 +40,11 @@ enum {
 AACEncSBRContext *ff_aac_sbr_enc_init(AVCodecContext *avctx, int channels, int sample_rate, int64_t bit_rate);
 void ff_aac_sbr_enc_close(AACEncSBRContext *s_ctx);
 
+void ff_aac_sbr_enc_resample(AACEncSBRContext *s_ctx, int num_channels,
+                             int frame_len, float **input_samples, float **core_samples);
+
 void ff_aac_sbr_enc_process_frame(AACEncSBRContext *s_ctx, int num_channels, const int *is_lfe,
-                                  int frame_len, float **input_samples, float **core_samples);
+                                  int frame_len, float **input_samples);
 
 int ff_aac_sbr_enc_write_payload(AACEncSBRContext *s_ctx, PutBitContext *pb,
                                  int elem_type, int ch0);
