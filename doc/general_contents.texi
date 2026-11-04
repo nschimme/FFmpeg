@@ -328,6 +328,15 @@ Go to @url{https://github.com/FreewareAdvancedAudio/faac} and follow the
 instructions for installing the library.
 Then pass @code{--enable-libfaac} to configure to enable it.
 
+@subsection FAAD library
+
+FFmpeg can make use of the FAAD library (libfaad3) for AAC decoding.
+FAAD is an open-source, high-throughput AAC decoder.
+
+Go to @url{https://github.com/FreewareAdvancedAudio/faac} and follow the
+instructions for installing the library.
+Then pass @code{--enable-libfaad} to configure to enable it.
+
 @subsection Fraunhofer AAC library
 
 FFmpeg can make use of the Fraunhofer AAC library for AAC decoding & encoding.
@@ -1303,7 +1312,7 @@ following image formats are supported:
 @item 8SVX exponential       @tab     @tab  X
 @item 8SVX fibonacci         @tab     @tab  X
 @item AAC                    @tab EX  @tab  X
-    @tab encoding supported through internal encoder and external libraries libfdk-aac and libfaac
+    @tab encoding supported through internal encoder and external libraries libfdk-aac and libfaac, decoding supported through internal decoder and external libraries libfdk-aac and libfaad
 @item AAC+                   @tab  E  @tab  IX
     @tab encoding supported through external library libfdk-aac
 @item AC-3                   @tab IX  @tab  IX

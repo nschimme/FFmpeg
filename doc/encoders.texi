@@ -622,7 +622,7 @@ decrease quality.
 @anchor{libfaac-enc}
 @section libfaac
 
-libfaac AAC (Advanced Audio Coding) encoder wrapper using FAAC 2.0+ (2.2 ABI).
+libfaac AAC (Advanced Audio Coding) encoder wrapper using FAAC 3.x ABI.
 
 FAAC is an open-source, dependency-free AAC encoder optimized for high-throughput
 pipeline encoding while offering excellent perceptual quality.
@@ -631,7 +631,7 @@ Requires the presence of the libfaac headers and library during
 configuration. You need to explicitly configure the build with
 @code{--enable-libfaac}.
 
-FAAC 2.0+ is licensed under the LGPLv2.1-or-later.
+FAAC is licensed under the LGPLv2.1-or-later.
 
 @subsection Options
 
@@ -657,36 +657,38 @@ Auto profile selection.
 AAC Low Complexity (AAC-LC).
 @item he_aac_v1
 HE-AAC v1 (AAC-LC + SBR).
+@item he_aac_v2
+HE-AAC v2 (AAC-LC + SBR + PS).
 @end table
-Default is @samp{auto}. Note that HE-AAC v1 requires MPEG-4.
+Default is @samp{auto}. Note that HE-AAC requires MPEG-4.
 
 @item rate_control
 Set rate control mode.
 @table @option
 @item auto
 Auto rate control.
-@item vbr
-Variable bit rate (driven by @option{q} / @option{global_quality}).
 @item abr
 Average bit rate.
+@item vbr
+Variable bit rate (driven by @option{q} / @option{global_quality}).
 @item cbr
 Constant bit rate.
 @end table
 Default is @samp{auto}.
 
-@item joint_mode
-Set joint stereo mode.
+@item stereo_mode / joint_mode
+Set stereo mode.
 @table @option
-@item none
-Independent L/R stereo.
+@item lr
+Independent (L/R) stereo.
 @item ms
 Mid/Side stereo.
 @item is
 Intensity stereo.
-@item mixed
+@item auto
 Per-band mix of M/S and Intensity.
 @end table
-Default is @samp{none}.
+Default is @samp{auto}.
 
 @item short_control
 Set short block control mode.
@@ -706,8 +708,28 @@ Enable or disable Temporal Noise Shaping (TNS). Default is 1 (enabled).
 @item aac_pns / pns
 Enable or disable Perceptual Noise Substitution (PNS). Default is 1 (enabled).
 
-@item max_bit_rate
+@item peak_bit_rate / max_bit_rate
 Set whole-stream peak bitrate ceiling in bits/s (0 = unlimited).
+
+@item drc_profile
+Set dynamic range control (DRC) profile.
+@table @option
+@item off
+No DRC fill element (default).
+@item film
+Film standard.
+@item film_light
+Film light.
+@item music
+Music standard.
+@item music_light
+Music light.
+@item speech
+Speech standard.
+@end table
+
+@item drc_ref_level
+Set program reference level in LUFS/dBFS (-31.75 to 0.0, default -23.0).
 @end table
 
 @anchor{libfdk-aac-enc}

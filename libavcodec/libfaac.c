@@ -37,14 +37,16 @@ typedef struct FaacEncContext {
     AudioFrameQueue afq;
     uint32_t max_output_bytes;
 
-    int mpegversion;      /* FAAC_MPEG4 / FAAC_MPEG2 */
-    int object_type;      /* FAAC_OBJ_AUTO, FAAC_OBJ_LOW, FAAC_OBJ_HE_AAC_V1 */
-    int rate_control;     /* FAAC_RC_AUTO, FAAC_RC_VBR, FAAC_RC_ABR, FAAC_RC_CBR */
-    int joint_mode;       /* FAAC_JOINT_NONE, FAAC_JOINT_MS, FAAC_JOINT_IS, FAAC_JOINT_MIXED */
+    int mpegversion;      /* FAAC_STREAM_ADTS / FAAC_STREAM_ADTS_MPEG2 */
+    int object_type;      /* FAAC_OBJ_AUTO, FAAC_OBJ_LC, FAAC_OBJ_HE_AAC_V1, FAAC_OBJ_HE_AAC_V2 */
+    int rate_control;     /* -1 = auto, FAAC_RC_ABR, FAAC_RC_VBR, FAAC_RC_CBR */
+    int stereo_mode;      /* FAAC_STEREO_AUTO, FAAC_STEREO_LR, FAAC_STEREO_MS, FAAC_STEREO_IS */
     int short_control;    /* FAAC_SHORTCTL_NORMAL, FAAC_SHORTCTL_NOSHORT, FAAC_SHORTCTL_NOLONG */
     int tns;              /* -1 = library default (true), 1, 0 */
     int pns;              /* -1 = library default (true), 1, 0 */
-    int max_bit_rate;     /* Whole-stream peak bitrate ceiling (0 = unlimited) */
+    int peak_bit_rate;    /* Whole-stream peak bitrate ceiling (0 = unlimited) */
+    int drc_profile;      /* FAAC_DRC_OFF .. FAAC_DRC_SPEECH */
+    float drc_ref_level;  /* -31.75 .. 0.0 LUFS/dBFS */
 } FaacEncContext;
 
 static av_cold int faac_encode_init(AVCodecContext *avctx)
@@ -52,9 +54,24 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
     FaacEncContext *s = avctx->priv_data;
     faac_params params;
     faac_encoder_info info;
+    faac_library_info lib_info;
     faac_status status;
     int channels = avctx->ch_layout.nb_channels;
     int qual = 0;
+
+    lib_info.struct_size = sizeof(lib_info);
+    status = faac_get_library_info(&lib_info);
+    if (status != FAAC_OK) {
+        av_log(avctx, AV_LOG_ERROR, "faac_get_library_info failed: %s (%d)\n",
+               faac_strerror(status), status);
+        return AVERROR_EXTERNAL;
+    }
+
+    if (channels > (int)lib_info.max_channels) {
+        av_log(avctx, AV_LOG_ERROR, "Channel count %d exceeds libfaac maximum of %u\n",
+               channels, (unsigned)lib_info.max_channels);
+        return AVERROR(EINVAL);
+    }
 
     status = faac_params_init(&params, sizeof(params));
     if (status != FAAC_OK) {
@@ -63,15 +80,15 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
         return AVERROR_EXTERNAL;
     }
 
-    params.sample_rate  = avctx->sample_rate;
-    params.num_channels = channels;
+    params.sample_rate = avctx->sample_rate;
+    params.channels    = channels;
 
     switch (avctx->sample_fmt) {
     case AV_SAMPLE_FMT_S16:
         params.input_format = FAAC_INPUT_16BIT;
         break;
     case AV_SAMPLE_FMT_S32:
-        params.input_format = FAAC_INPUT_32BIT;
+        params.input_format = FAAC_INPUT_24IN32;
         break;
     case AV_SAMPLE_FMT_FLT:
         params.input_format = FAAC_INPUT_FLOAT;
@@ -81,16 +98,19 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
         return AVERROR(EINVAL);
     }
 
-    params.mpeg_version  = s->mpegversion;
-    params.joint_mode    = s->joint_mode;
+    params.stereo_mode   = s->stereo_mode;
     params.short_control = s->short_control;
-    if (s->tns >= 0)
-        params.use_tns   = !!s->tns;
-    if (s->pns >= 0)
-        params.use_pns   = !!s->pns;
+    params.channel_layout = FAAC_LAYOUT_WAV;
 
-    params.use_lfe = (av_channel_layout_index_from_channel(&avctx->ch_layout,
-                                                           AV_CHAN_LOW_FREQUENCY) >= 0);
+    if (s->tns == 0)
+        params.flags &= ~FAAC_FLAG_TNS;
+    else if (s->tns > 0)
+        params.flags |= FAAC_FLAG_TNS;
+
+    if (s->pns == 0)
+        params.flags &= ~FAAC_FLAG_PNS;
+    else if (s->pns > 0)
+        params.flags |= FAAC_FLAG_PNS;
 
     /* Profile / Object Type selection */
     if (s->object_type != FAAC_OBJ_AUTO) {
@@ -98,18 +118,22 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
     } else {
         switch (avctx->profile) {
         case AV_PROFILE_AAC_LOW:
-            params.object_type = FAAC_OBJ_LOW;
+            params.object_type = FAAC_OBJ_LC;
             break;
         case AV_PROFILE_MPEG2_AAC_LOW:
-            params.object_type  = FAAC_OBJ_LOW;
-            params.mpeg_version = FAAC_MPEG2;
+            params.object_type = FAAC_OBJ_LC;
+            s->mpegversion     = 2;
             break;
         case AV_PROFILE_AAC_HE:
         case AV_PROFILE_MPEG2_AAC_HE:
-            params.object_type  = FAAC_OBJ_HE_AAC_V1;
-            params.mpeg_version = FAAC_MPEG4;
-            if (avctx->profile == AV_PROFILE_MPEG2_AAC_HE || s->mpegversion == FAAC_MPEG2)
+            params.object_type = FAAC_OBJ_HE_AAC_V1;
+            if (avctx->profile == AV_PROFILE_MPEG2_AAC_HE || s->mpegversion == 2)
                 av_log(avctx, AV_LOG_WARNING, "HE-AAC v1 requires MPEG-4; forcing MPEG-4\n");
+            s->mpegversion = 4;
+            break;
+        case AV_PROFILE_AAC_HE_V2:
+            params.object_type = FAAC_OBJ_HE_AAC_V2;
+            s->mpegversion = 4;
             break;
         default:
             params.object_type = FAAC_OBJ_AUTO;
@@ -117,19 +141,46 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
         }
     }
 
-    if (params.object_type == FAAC_OBJ_HE_AAC_V1 && params.mpeg_version == FAAC_MPEG2) {
-        av_log(avctx, AV_LOG_WARNING, "HE-AAC v1 requires MPEG-4; forcing MPEG-4\n");
-        params.mpeg_version = FAAC_MPEG4;
+    /* Check runtime library capabilities */
+    if (params.object_type == FAAC_OBJ_HE_AAC_V1 || params.object_type == FAAC_OBJ_HE_AAC_V2) {
+        if (!(lib_info.flags & FAAC_LIB_SBR)) {
+            av_log(avctx, AV_LOG_ERROR, "HE-AAC requested but libfaac was compiled without SBR support\n");
+            return AVERROR(EINVAL);
+        }
+    }
+    if (params.object_type == FAAC_OBJ_HE_AAC_V2) {
+        if (!(lib_info.flags & FAAC_LIB_PS)) {
+            av_log(avctx, AV_LOG_ERROR, "HE-AAC v2 requested but libfaac was compiled without PS support\n");
+            return AVERROR(EINVAL);
+        }
+        if (channels != 2) {
+            av_log(avctx, AV_LOG_ERROR, "HE-AAC v2 requires stereo input (2 channels)\n");
+            return AVERROR(EINVAL);
+        }
     }
 
-    if (params.mpeg_version == FAAC_MPEG2 && params.use_pns) {
+    if ((params.object_type == FAAC_OBJ_HE_AAC_V1 || params.object_type == FAAC_OBJ_HE_AAC_V2) &&
+        s->mpegversion == 2) {
+        av_log(avctx, AV_LOG_WARNING, "HE-AAC requires MPEG-4; forcing MPEG-4\n");
+        s->mpegversion = 4;
+    }
+
+    /* Stream Format & Extradata */
+    if (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)
+        params.stream_format = FAAC_STREAM_RAW;
+    else if (s->mpegversion == 2)
+        params.stream_format = FAAC_STREAM_ADTS_MPEG2;
+    else
+        params.stream_format = FAAC_STREAM_ADTS;
+
+    if (params.stream_format == FAAC_STREAM_ADTS_MPEG2 && (params.flags & FAAC_FLAG_PNS)) {
         av_log(avctx, AV_LOG_WARNING, "PNS requires MPEG-4; disabling PNS for MPEG-2\n");
-        params.use_pns = 0;
+        params.flags &= ~FAAC_FLAG_PNS;
     }
 
-    /* Bitrate translation: FFmpeg provides total stream bitrate, FAAC expects per-channel */
+    /* Bitrate translation: whole stream in ABI 3.x */
     if (avctx->bit_rate > 0)
-        params.bit_rate = (uint32_t)(avctx->bit_rate / channels);
+        params.bit_rate = (uint32_t)avctx->bit_rate;
 
     if (avctx->global_quality > 0) {
         qual = (avctx->global_quality > 5000) ? (avctx->global_quality / FF_QP2LAMBDA)
@@ -138,40 +189,48 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
     }
 
     /* Rate Control mode configuration */
-    if (s->rate_control != FAAC_RC_AUTO) {
+    if (s->rate_control >= 0) {
         params.rate_control = s->rate_control;
     } else if (qual > 0 && avctx->bit_rate <= 0) {
         params.rate_control = FAAC_RC_VBR;
     } else if (avctx->rc_max_rate > 0 && avctx->rc_max_rate == avctx->bit_rate) {
         params.rate_control = FAAC_RC_CBR;
-    } else if (avctx->bit_rate > 0) {
-        params.rate_control = FAAC_RC_ABR;
     } else {
-        params.rate_control = FAAC_RC_AUTO;
+        params.rate_control = FAAC_RC_ABR;
     }
 
     if (params.rate_control == FAAC_RC_VBR) {
         params.bit_rate = 0;
-        params.quant_quality = qual > 0 ? qual : 100;
-    } else if (qual > 0) {
-        params.quant_quality = qual;
+        params.quality = qual > 0 ? qual : 100;
+    } else {
+        params.quality = 0;
     }
 
     /* Peak bitrate ceiling */
-    if (s->max_bit_rate > 0)
-        params.max_bit_rate = s->max_bit_rate;
+    if (s->peak_bit_rate > 0)
+        params.peak_bit_rate = s->peak_bit_rate;
     else if (avctx->rc_max_rate > 0)
-        params.max_bit_rate = avctx->rc_max_rate;
+        params.peak_bit_rate = avctx->rc_max_rate;
+
+    if (params.peak_bit_rate > 0 && params.peak_bit_rate < params.bit_rate) {
+        av_log(avctx, AV_LOG_WARNING, "Peak bitrate (%u) < bit_rate (%u), raising peak bitrate\n",
+               params.peak_bit_rate, params.bit_rate);
+        params.peak_bit_rate = params.bit_rate;
+    }
+
+    /* DRC configuration */
+    if (s->drc_profile != FAAC_DRC_OFF) {
+        if (!(lib_info.flags & FAAC_LIB_DRC)) {
+            av_log(avctx, AV_LOG_ERROR, "DRC profile requested but libfaac was compiled without DRC support\n");
+            return AVERROR(EINVAL);
+        }
+        params.drc_profile   = s->drc_profile;
+        params.drc_ref_level = av_clipf(s->drc_ref_level, -31.75f, 0.0f);
+    }
 
     /* Cutoff / Bandwidth */
     if (avctx->cutoff > 0)
         params.bandwidth = avctx->cutoff;
-
-    /* Stream Format & Extradata */
-    if (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)
-        params.output_format = FAAC_STREAM_RAW;
-    else
-        params.output_format = FAAC_STREAM_ADTS;
 
     status = faac_encoder_open(&params, &s->handle);
     if (status != FAAC_OK) {
@@ -180,7 +239,7 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
         return AVERROR_EXTERNAL;
     }
 
-    if (params.output_format == FAAC_STREAM_RAW) {
+    if (params.stream_format == FAAC_STREAM_RAW) {
         const uint8_t *asc_buf = NULL;
         uint32_t asc_len = 0;
 
@@ -272,26 +331,28 @@ static av_cold int faac_encode_close(AVCodecContext *avctx)
 #define AE AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 
 static const AVOption faac_enc_options[] = {
-    { "mpegversion", "MPEG version", OFFSET(mpegversion), AV_OPT_TYPE_INT, { .i64 = FAAC_MPEG4 }, FAAC_MPEG4, FAAC_MPEG2, AE, .unit = "mpegversion" },
-        { "mpeg4", "MPEG-4", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_MPEG4 }, 0, 0, AE, .unit = "mpegversion" },
-        { "mpeg2", "MPEG-2", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_MPEG2 }, 0, 0, AE, .unit = "mpegversion" },
+    { "mpegversion", "MPEG version", OFFSET(mpegversion), AV_OPT_TYPE_INT, { .i64 = 4 }, 2, 4, AE, .unit = "mpegversion" },
+        { "mpeg4", "MPEG-4", 0, AV_OPT_TYPE_CONST, { .i64 = 4 }, 0, 0, AE, .unit = "mpegversion" },
+        { "mpeg2", "MPEG-2", 0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, AE, .unit = "mpegversion" },
 
-    { "object_type", "AAC object type", OFFSET(object_type), AV_OPT_TYPE_INT, { .i64 = FAAC_OBJ_AUTO }, FAAC_OBJ_AUTO, FAAC_OBJ_HE_AAC_V1, AE, .unit = "object_type" },
-        { "auto",      "Auto profile selection", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_OBJ_AUTO },      0, 0, AE, .unit = "object_type" },
-        { "lc",        "AAC Low Complexity (AAC-LC)", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_OBJ_LOW },  0, 0, AE, .unit = "object_type" },
+    { "object_type", "AAC object type", OFFSET(object_type), AV_OPT_TYPE_INT, { .i64 = FAAC_OBJ_AUTO }, FAAC_OBJ_AUTO, FAAC_OBJ_HE_AAC_V2, AE, .unit = "object_type" },
+        { "auto",      "Auto profile selection",     0, AV_OPT_TYPE_CONST, { .i64 = FAAC_OBJ_AUTO },      0, 0, AE, .unit = "object_type" },
+        { "lc",        "AAC Low Complexity (AAC-LC)", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_OBJ_LC },        0, 0, AE, .unit = "object_type" },
         { "he_aac_v1", "HE-AAC v1 (AAC-LC + SBR)",   0, AV_OPT_TYPE_CONST, { .i64 = FAAC_OBJ_HE_AAC_V1 }, 0, 0, AE, .unit = "object_type" },
+        { "he_aac_v2", "HE-AAC v2 (AAC-LC + SBR + PS)", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_OBJ_HE_AAC_V2 }, 0, 0, AE, .unit = "object_type" },
 
-    { "rate_control", "Rate control mode", OFFSET(rate_control), AV_OPT_TYPE_INT, { .i64 = FAAC_RC_AUTO }, FAAC_RC_AUTO, FAAC_RC_CBR, AE, .unit = "rate_control" },
-        { "auto", "Auto rate control", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_RC_AUTO }, 0, 0, AE, .unit = "rate_control" },
-        { "vbr",  "Variable bit rate", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_RC_VBR },  0, 0, AE, .unit = "rate_control" },
+    { "rate_control", "Rate control mode", OFFSET(rate_control), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, FAAC_RC_CBR, AE, .unit = "rate_control" },
+        { "auto", "Auto rate control", 0, AV_OPT_TYPE_CONST, { .i64 = -1 },           0, 0, AE, .unit = "rate_control" },
         { "abr",  "Average bit rate",  0, AV_OPT_TYPE_CONST, { .i64 = FAAC_RC_ABR },  0, 0, AE, .unit = "rate_control" },
+        { "vbr",  "Variable bit rate", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_RC_VBR },  0, 0, AE, .unit = "rate_control" },
         { "cbr",  "Constant bit rate", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_RC_CBR },  0, 0, AE, .unit = "rate_control" },
 
-    { "joint_mode", "Joint stereo mode", OFFSET(joint_mode), AV_OPT_TYPE_INT, { .i64 = FAAC_JOINT_MIXED }, FAAC_JOINT_NONE, FAAC_JOINT_MIXED, AE, .unit = "joint_mode" },
-        { "none",  "Independent L/R stereo",           0, AV_OPT_TYPE_CONST, { .i64 = FAAC_JOINT_NONE },  0, 0, AE, .unit = "joint_mode" },
-        { "ms",    "Mid/Side stereo",                  0, AV_OPT_TYPE_CONST, { .i64 = FAAC_JOINT_MS },    0, 0, AE, .unit = "joint_mode" },
-        { "is",    "Intensity stereo",                 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_JOINT_IS },    0, 0, AE, .unit = "joint_mode" },
-        { "mixed", "Per-band mix of M/S and Intensity", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_JOINT_MIXED }, 0, 0, AE, .unit = "joint_mode" },
+    { "stereo_mode", "Stereo mode", OFFSET(stereo_mode), AV_OPT_TYPE_INT, { .i64 = FAAC_STEREO_AUTO }, FAAC_STEREO_LR, FAAC_STEREO_AUTO, AE, .unit = "stereo_mode" },
+        { "lr",   "Independent (L/R) stereo",           0, AV_OPT_TYPE_CONST, { .i64 = FAAC_STEREO_LR },   0, 0, AE, .unit = "stereo_mode" },
+        { "ms",   "Mid/Side stereo",                    0, AV_OPT_TYPE_CONST, { .i64 = FAAC_STEREO_MS },   0, 0, AE, .unit = "stereo_mode" },
+        { "is",   "Intensity stereo",                   0, AV_OPT_TYPE_CONST, { .i64 = FAAC_STEREO_IS },   0, 0, AE, .unit = "stereo_mode" },
+        { "auto", "Per-band mix of M/S and Intensity",  0, AV_OPT_TYPE_CONST, { .i64 = FAAC_STEREO_AUTO }, 0, 0, AE, .unit = "stereo_mode" },
+    { "joint_mode", "Joint stereo mode (alias for stereo_mode)", OFFSET(stereo_mode), AV_OPT_TYPE_INT, { .i64 = FAAC_STEREO_AUTO }, FAAC_STEREO_LR, FAAC_STEREO_AUTO, AE, .unit = "stereo_mode" },
 
     { "short_control", "Short block control mode", OFFSET(short_control), AV_OPT_TYPE_INT, { .i64 = FAAC_SHORTCTL_NORMAL }, FAAC_SHORTCTL_NORMAL, FAAC_SHORTCTL_NOLONG, AE, .unit = "short_control" },
         { "normal",  "Let block switching decide", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_SHORTCTL_NORMAL },  0, 0, AE, .unit = "short_control" },
@@ -304,7 +365,18 @@ static const AVOption faac_enc_options[] = {
     { "aac_pns", "Perceptual noise substitution", OFFSET(pns), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, AE },
     { "pns",     "Perceptual noise substitution", OFFSET(pns), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, AE },
 
-    { "max_bit_rate", "Whole-stream peak bitrate ceiling in bits/s (0 = unlimited)", OFFSET(max_bit_rate), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, AE },
+    { "peak_bit_rate", "Whole-stream peak bitrate ceiling in bits/s (0 = unlimited)", OFFSET(peak_bit_rate), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, AE },
+    { "max_bit_rate",  "Whole-stream peak bitrate ceiling in bits/s (alias for peak_bit_rate)", OFFSET(peak_bit_rate), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, AE },
+
+    { "drc_profile", "DRC profile", OFFSET(drc_profile), AV_OPT_TYPE_INT, { .i64 = FAAC_DRC_OFF }, FAAC_DRC_OFF, FAAC_DRC_SPEECH, AE, .unit = "drc_profile" },
+        { "off",         "No DRC element",  0, AV_OPT_TYPE_CONST, { .i64 = FAAC_DRC_OFF },         0, 0, AE, .unit = "drc_profile" },
+        { "film",        "Film standard",   0, AV_OPT_TYPE_CONST, { .i64 = FAAC_DRC_FILM },        0, 0, AE, .unit = "drc_profile" },
+        { "film_light",  "Film light",      0, AV_OPT_TYPE_CONST, { .i64 = FAAC_DRC_FILM_LIGHT },  0, 0, AE, .unit = "drc_profile" },
+        { "music",       "Music standard",  0, AV_OPT_TYPE_CONST, { .i64 = FAAC_DRC_MUSIC },       0, 0, AE, .unit = "drc_profile" },
+        { "music_light", "Music light",     0, AV_OPT_TYPE_CONST, { .i64 = FAAC_DRC_MUSIC_LIGHT }, 0, 0, AE, .unit = "drc_profile" },
+        { "speech",      "Speech standard", 0, AV_OPT_TYPE_CONST, { .i64 = FAAC_DRC_SPEECH },      0, 0, AE, .unit = "drc_profile" },
+
+    { "drc_ref_level", "DRC program reference level in LUFS/dBFS (-31.75 to 0.0)", OFFSET(drc_ref_level), AV_OPT_TYPE_FLOAT, { .dbl = -23.0 }, -31.75, 0.0, AE },
 
     FF_AAC_PROFILE_OPTS
     { NULL }
