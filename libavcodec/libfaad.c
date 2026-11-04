@@ -47,6 +47,34 @@ typedef struct FaadDecContext {
     int initialized;
 } FaadDecContext;
 
+static void faad_update_format(AVCodecContext *avctx, const faad_stream_info *info)
+{
+    if (info->sample_rate > 0)
+        avctx->sample_rate = info->sample_rate;
+
+    if (info->channel_mask > 0) {
+        av_channel_layout_uninit(&avctx->ch_layout);
+        av_channel_layout_from_mask(&avctx->ch_layout, info->channel_mask);
+    } else if (info->channels > 0) {
+        av_channel_layout_uninit(&avctx->ch_layout);
+        av_channel_layout_default(&avctx->ch_layout, info->channels);
+    }
+
+    switch (info->object_type) {
+    case FAAD_OBJ_LC:
+        avctx->profile = AV_PROFILE_AAC_LOW;
+        break;
+    case FAAD_OBJ_HE_AAC_V1:
+        avctx->profile = AV_PROFILE_AAC_HE;
+        break;
+    case FAAD_OBJ_HE_AAC_V2:
+        avctx->profile = AV_PROFILE_AAC_HE_V2;
+        break;
+    default:
+        break;
+    }
+}
+
 static av_cold int faad_decode_close(AVCodecContext *avctx)
 {
     FaadDecContext *s = avctx->priv_data;
@@ -149,45 +177,12 @@ static av_cold int faad_decode_init(AVCodecContext *avctx)
     }
 
     if (info.flags & FAAD_STREAM_FORMAT_KNOWN) {
-        if (info.sample_rate > 0)
-            avctx->sample_rate = info.sample_rate;
-        if (info.channel_mask > 0)
-            av_channel_layout_from_mask(&avctx->ch_layout, info.channel_mask);
-        else if (info.channels > 0)
-            av_channel_layout_default(&avctx->ch_layout, info.channels);
+        faad_update_format(avctx, &info);
     }
 
     s->initialized = 1;
 
     return 0;
-}
-
-static void faad_update_format(AVCodecContext *avctx, const faad_stream_info *info)
-{
-    if (info->sample_rate > 0)
-        avctx->sample_rate = info->sample_rate;
-
-    if (info->channel_mask > 0) {
-        av_channel_layout_uninit(&avctx->ch_layout);
-        av_channel_layout_from_mask(&avctx->ch_layout, info->channel_mask);
-    } else if (info->channels > 0) {
-        av_channel_layout_uninit(&avctx->ch_layout);
-        av_channel_layout_default(&avctx->ch_layout, info->channels);
-    }
-
-    switch (info->object_type) {
-    case FAAD_OBJ_LC:
-        avctx->profile = AV_PROFILE_AAC_LOW;
-        break;
-    case FAAD_OBJ_HE_AAC_V1:
-        avctx->profile = AV_PROFILE_AAC_HE;
-        break;
-    case FAAD_OBJ_HE_AAC_V2:
-        avctx->profile = AV_PROFILE_AAC_HE_V2;
-        break;
-    default:
-        break;
-    }
 }
 
 static int faad_decode_packet(AVCodecContext *avctx, AVFrame *frame,
@@ -208,8 +203,9 @@ static int faad_decode_packet(AVCodecContext *avctx, AVFrame *frame,
     status = faad_decode_frame(s->handle, buf, (uint32_t)buf_size, &consumed,
                                s->pcm_buf, s->pcm_buf_size, &written, &flags);
 
-    if (status == FAAD_ERR_NEED_MORE_DATA)
-        return buf_size;
+    if (status == FAAD_ERR_NEED_MORE_DATA) {
+        return consumed > 0 ? (int)consumed : AVERROR(EAGAIN);
+    }
 
     if (status != FAAD_OK) {
         av_log(avctx, AV_LOG_ERROR, "faad_decode_frame error: %s (%d), consumed %u bytes\n",
@@ -219,13 +215,37 @@ static int faad_decode_packet(AVCodecContext *avctx, AVFrame *frame,
 
     if (flags & FAAD_FRAME_FORMAT_CHANGED) {
         faad_stream_info info = { .struct_size = sizeof(info) };
-        if (faad_decoder_get_info(s->handle, &info) == FAAD_OK)
-            faad_update_format(avctx, &info);
+        status = faad_decoder_get_info(s->handle, &info);
+        if (status != FAAD_OK) {
+            av_log(avctx, AV_LOG_ERROR, "faad_decoder_get_info failed on format change: %s (%d)\n",
+                   faad_strerror(status), status);
+            return AVERROR_INVALIDDATA;
+        }
+        faad_update_format(avctx, &info);
     }
 
-    if (written > 0 && avctx->ch_layout.nb_channels > 0) {
-        int nb_samples = written / (avctx->ch_layout.nb_channels * s->sample_size);
-        frame->nb_samples = nb_samples;
+    if (written > 0) {
+        int bytes_per_sample_group;
+
+        if (written > s->pcm_buf_size) {
+            av_log(avctx, AV_LOG_ERROR, "Decoded bytes (%u) exceed buffer size (%u)\n",
+                   written, s->pcm_buf_size);
+            return AVERROR_INVALIDDATA;
+        }
+
+        if (avctx->ch_layout.nb_channels <= 0 || s->sample_size <= 0) {
+            av_log(avctx, AV_LOG_ERROR, "Invalid channels or sample size\n");
+            return AVERROR_INVALIDDATA;
+        }
+
+        bytes_per_sample_group = avctx->ch_layout.nb_channels * s->sample_size;
+        if (written % bytes_per_sample_group != 0) {
+            av_log(avctx, AV_LOG_ERROR, "Decoded byte count %u is not a multiple of sample size group %d\n",
+                   written, bytes_per_sample_group);
+            return AVERROR_INVALIDDATA;
+        }
+
+        frame->nb_samples = written / bytes_per_sample_group;
 
         ret = ff_get_buffer(avctx, frame, 0);
         if (ret < 0)
@@ -235,7 +255,7 @@ static int faad_decode_packet(AVCodecContext *avctx, AVFrame *frame,
         *got_frame_ptr = 1;
     }
 
-    return (consumed > 0) ? (int)consumed : buf_size;
+    return (int)consumed;
 }
 
 static av_cold void faad_decode_flush(AVCodecContext *avctx)

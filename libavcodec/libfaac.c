@@ -58,6 +58,7 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
     faac_status status;
     int channels = avctx->ch_layout.nb_channels;
     int qual = 0;
+    int mpegversion = s->mpegversion;
 
     lib_info.struct_size = sizeof(lib_info);
     status = faac_get_library_info(&lib_info);
@@ -87,9 +88,6 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
     case AV_SAMPLE_FMT_S16:
         params.input_format = FAAC_INPUT_16BIT;
         break;
-    case AV_SAMPLE_FMT_S32:
-        params.input_format = FAAC_INPUT_24IN32;
-        break;
     case AV_SAMPLE_FMT_FLT:
         params.input_format = FAAC_INPUT_FLOAT;
         break;
@@ -98,9 +96,29 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
         return AVERROR(EINVAL);
     }
 
+    /* Channel layout verification */
+    if (channels <= 2) {
+        params.channel_layout = FAAC_LAYOUT_WAV;
+    } else if (avctx->ch_layout.order == AV_CHANNEL_ORDER_NATIVE) {
+        switch (avctx->ch_layout.u.mask) {
+        case AV_CH_LAYOUT_SURROUND:
+        case AV_CH_LAYOUT_4POINT0:
+        case AV_CH_LAYOUT_5POINT0_BACK:
+        case AV_CH_LAYOUT_5POINT1_BACK:
+        case AV_CH_LAYOUT_7POINT1:
+            params.channel_layout = FAAC_LAYOUT_WAV;
+            break;
+        default:
+            av_log(avctx, AV_LOG_ERROR, "Channel layout not supported by libfaac\n");
+            return AVERROR(EINVAL);
+        }
+    } else {
+        av_log(avctx, AV_LOG_ERROR, "Non-native channel layout not supported by libfaac\n");
+        return AVERROR(EINVAL);
+    }
+
     params.stereo_mode   = s->stereo_mode;
     params.short_control = s->short_control;
-    params.channel_layout = FAAC_LAYOUT_WAV;
 
     if (s->tns == 0)
         params.flags &= ~FAAC_FLAG_TNS;
@@ -122,18 +140,18 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
             break;
         case AV_PROFILE_MPEG2_AAC_LOW:
             params.object_type = FAAC_OBJ_LC;
-            s->mpegversion     = 2;
+            mpegversion        = 2;
             break;
         case AV_PROFILE_AAC_HE:
         case AV_PROFILE_MPEG2_AAC_HE:
             params.object_type = FAAC_OBJ_HE_AAC_V1;
-            if (avctx->profile == AV_PROFILE_MPEG2_AAC_HE || s->mpegversion == 2)
+            if (avctx->profile == AV_PROFILE_MPEG2_AAC_HE || mpegversion == 2)
                 av_log(avctx, AV_LOG_WARNING, "HE-AAC v1 requires MPEG-4; forcing MPEG-4\n");
-            s->mpegversion = 4;
+            mpegversion = 4;
             break;
         case AV_PROFILE_AAC_HE_V2:
             params.object_type = FAAC_OBJ_HE_AAC_V2;
-            s->mpegversion = 4;
+            mpegversion = 4;
             break;
         default:
             params.object_type = FAAC_OBJ_AUTO;
@@ -160,15 +178,15 @@ static av_cold int faac_encode_init(AVCodecContext *avctx)
     }
 
     if ((params.object_type == FAAC_OBJ_HE_AAC_V1 || params.object_type == FAAC_OBJ_HE_AAC_V2) &&
-        s->mpegversion == 2) {
+        mpegversion == 2) {
         av_log(avctx, AV_LOG_WARNING, "HE-AAC requires MPEG-4; forcing MPEG-4\n");
-        s->mpegversion = 4;
+        mpegversion = 4;
     }
 
     /* Stream Format & Extradata */
     if (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)
         params.stream_format = FAAC_STREAM_RAW;
-    else if (s->mpegversion == 2)
+    else if (mpegversion == 2)
         params.stream_format = FAAC_STREAM_ADTS_MPEG2;
     else
         params.stream_format = FAAC_STREAM_ADTS;
@@ -391,7 +409,6 @@ static const AVClass faac_enc_class = {
 
 static const enum AVSampleFormat faac_sample_fmts[] = {
     AV_SAMPLE_FMT_S16,
-    AV_SAMPLE_FMT_S32,
     AV_SAMPLE_FMT_FLT,
     AV_SAMPLE_FMT_NONE,
 };
@@ -408,6 +425,7 @@ const FFCodec ff_libfaac_encoder = {
     .p.id           = AV_CODEC_ID_AAC,
     .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY |
                       AV_CODEC_CAP_SMALL_LAST_FRAME,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     CODEC_SAMPLEFMTS_ARRAY(faac_sample_fmts),
     .p.profiles     = NULL_IF_CONFIG_SMALL(ff_aac_profiles),
     .p.priv_class   = &faac_enc_class,
