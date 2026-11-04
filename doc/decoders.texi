@@ -293,6 +293,9 @@ follows.
 
 libfaad AAC (Advanced Audio Coding) decoder wrapper using libfaad3.
 
+libfaad3 is an extremely fast, high-throughput AAC decoder, outperforming native and
+other external decoders in decoding speed while delivering competitive audio quality.
+
 Requires the presence of the libfaad3 headers and library during
 configuration. You need to explicitly configure the build with
 @code{--enable-libfaad}.

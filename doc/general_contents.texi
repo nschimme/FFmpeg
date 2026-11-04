@@ -331,7 +331,7 @@ Then pass @code{--enable-libfaac} to configure to enable it.
 @subsection FAAD library
 
 FFmpeg can make use of the FAAD library (libfaad3) for AAC decoding.
-FAAD is an open-source, high-throughput AAC decoder.
+FAAD is an open-source, extremely fast, high-throughput AAC decoder.
 
 Go to @url{https://github.com/FreewareAdvancedAudio/faac} and follow the
 instructions for installing the library.
