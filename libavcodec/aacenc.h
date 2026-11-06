@@ -291,6 +291,7 @@ typedef struct AACEncContext {
     float *planar_samples[16];                   ///< saved preprocessed input
 
     int profile;                                 ///< copied from avctx
+    int core_rate;                               ///< sample rate of the coded signal
     int needs_pce;                               ///< flag for non-standard layout
     int needs_height_ext;                        ///< flag for PCE height extension
     LPCContext lpc;                              ///< used by TNS

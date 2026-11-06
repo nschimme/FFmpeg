@@ -315,7 +315,7 @@ static int nmr_setup_channel(AVCodecContext *avctx, AACEncContext *s,
 
     /* band cutoff index for this frame's window size; the bandwidth is fixed
      * at init and shared with the psy model */
-    cutoff = s->bandwidth * 2 * (1024 / sce->ics.num_windows) / avctx->sample_rate;
+    cutoff = s->bandwidth * 2 * (1024 / sce->ics.num_windows) / s->core_rate;
 
     /* Short-block shaping: temporal premask + per-window threshold flatten. */
     if (sce->ics.window_sequence[0] == EIGHT_SHORT_SEQUENCE) {
@@ -396,7 +396,7 @@ static int nmr_setup_channel(AVCodecContext *avctx, AACEncContext *s,
              * knee reproduces that rolloff */
             float hftdb;
             {
-                float bfreq = start * (avctx->sample_rate * (sce->ics.num_windows == 8 ? 4.0f : 0.5f)) / 1024.0f;
+                float bfreq = start * (s->core_rate * (sce->ics.num_windows == 8 ? 4.0f : 0.5f)) / 1024.0f;
                 float k = FFMAX(0.0f, bfreq - NMR_HF_TAPER_KNEE) / 1000.0f;
                 hftdb = NMR_HF_TAPER * k * k;
             }
@@ -827,7 +827,7 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
                     float en = sl[k]->pener[bi];
                     int bin = sl[k]->bst[b] - sl[k]->bw[b]*128;
                     etot += en;
-                    if (bin * (avctx->sample_rate * 4.0f) / 1024.0f > 6000.0f)
+                    if (bin * (s->core_rate * 4.0f) / 1024.0f > 6000.0f)
                         ehf += en;
                 }
             hfw = etot > 0.0f ? av_clipf(ehf / (etot * NMR_INFL_HF), 0.0f, 1.0f) : 1.0f;

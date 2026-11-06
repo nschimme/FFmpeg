@@ -172,8 +172,8 @@ static void search_for_quantizers_twoloop(AVCodecContext *avctx,
     {
         int wlen = 1024 / sce->ics.num_windows;
         /* the bandwidth is fixed at init and shared with the psy model */
-        cutoff = s->bandwidth * 2 * wlen / avctx->sample_rate;
-        pns_start_pos = NOISE_LOW_LIMIT * 2 * wlen / avctx->sample_rate;
+        cutoff = s->bandwidth * 2 * wlen / s->core_rate;
+        pns_start_pos = NOISE_LOW_LIMIT * 2 * wlen / s->core_rate;
     }
 
     /**

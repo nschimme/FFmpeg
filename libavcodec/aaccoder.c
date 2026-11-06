@@ -506,7 +506,7 @@ static void search_for_pns(AACEncContext *s, AVCodecContext *avctx, SingleChanne
     float *NOR34 = &s->scoefs[3*128];
     uint8_t nextband[128];
     const float lambda = s->lambda;
-    const float freq_mult = avctx->sample_rate*0.5f/wlen;
+    const float freq_mult = s->core_rate*0.5f/wlen;
     const float thr_mult = NOISE_LAMBDA_REPLACE*(100.0f/lambda);
     const float spread_threshold = FFMIN(0.75f, NOISE_SPREAD_THRESHOLD*FFMAX(0.5f, lambda/100.f));
     const float dist_bias = av_clipf(4.f * 120 / lambda, 0.25f, 4.0f);
@@ -518,7 +518,7 @@ static void search_for_pns(AACEncContext *s, AVCodecContext *avctx, SingleChanne
      * fixed at init), not a separate heuristic, or it evaluates a different band
      * range than the coder later codes. */
     bandwidth = s->bandwidth;
-    cutoff = bandwidth * 2 * wlen / avctx->sample_rate;
+    cutoff = bandwidth * 2 * wlen / s->core_rate;
 
     memcpy(sce->band_alt, sce->band_type, sizeof(sce->band_type));
     ff_init_nextband_map(sce, nextband);
@@ -632,7 +632,7 @@ static void mark_pns(AACEncContext *s, AVCodecContext *avctx, SingleChannelEleme
     int wlen = 1024 / sce->ics.num_windows;
     int bandwidth, cutoff;
     const float lambda = s->lambda;
-    const float freq_mult = avctx->sample_rate*0.5f/wlen;
+    const float freq_mult = s->core_rate*0.5f/wlen;
     const float spread_threshold = FFMIN(0.75f, NOISE_SPREAD_THRESHOLD*FFMAX(0.5f, lambda/100.f));
     const float pns_transient_energy_r = FFMIN(0.7f, lambda / 140.f);
 
@@ -640,7 +640,7 @@ static void mark_pns(AACEncContext *s, AVCodecContext *avctx, SingleChannelEleme
      * fixed at init), not a separate heuristic, or it evaluates a different band
      * range than the coder later codes (NMR relies on this output directly). */
     bandwidth = s->bandwidth;
-    cutoff = bandwidth * 2 * wlen / avctx->sample_rate;
+    cutoff = bandwidth * 2 * wlen / s->core_rate;
 
     memcpy(sce->band_alt, sce->band_type, sizeof(sce->band_type));
     for (w = 0; w < sce->ics.num_windows; w += sce->ics.group_len[w]) {
