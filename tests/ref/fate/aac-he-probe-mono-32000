@@ -1,0 +1,6 @@
+[STREAM]
+codec_name=aac
+profile=4
+sample_rate=32000
+channels=1
+[/STREAM]

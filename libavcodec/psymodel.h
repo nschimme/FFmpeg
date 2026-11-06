@@ -88,6 +88,7 @@ typedef struct FFPsyWindowInfo {
  */
 typedef struct FFPsyContext {
     AVCodecContext *avctx;            ///< encoder context
+    int sample_rate;                  ///< sample rate of the coded (core) signal
     const struct FFPsyModel *model;   ///< encoder-specific model functions
 
     FFPsyChannel      *ch;            ///< single channel information
@@ -171,7 +172,7 @@ typedef struct FFPsyModel {
  */
 int ff_psy_init(FFPsyContext *ctx, AVCodecContext *avctx, int num_lens,
                 const uint8_t **bands, const int *num_bands,
-                int num_groups, const uint8_t *group_map, int cutoff);
+                int num_groups, const uint8_t *group_map, int cutoff, int sample_rate);
 
 /**
  * Determine what group a channel belongs to.

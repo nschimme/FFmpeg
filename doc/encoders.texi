@@ -148,6 +148,16 @@ MPEG4 specifications.
 Long term prediction profile, is enabled by and will enable the @option{aac_ltp}
 option. Introduced in MPEG4.
 
+@item aac_he
+High Efficiency AAC (HE-AAC v1). The core is coded at half the sample rate and
+Spectral Band Replication (SBR) parameters for the upper part of the spectrum
+are added to the stream, which gives better quality than @samp{aac_low} at low
+bitrates (roughly 24 to 64 kbps for stereo). Only mono and stereo input with a
+sample rate from 16000 to 48000 Hz is supported. The SBR encoder is simple:
+it uses a fixed envelope grid, a constant noise floor and inverse filtering
+mode, and does not code added harmonics or use coupling. Use an MP4 container, or ADTS
+if the decoder is known to handle implicit SBR signalling.
+
 @end table
 If this option is unspecified it is set to @samp{aac_low}.
 @end table

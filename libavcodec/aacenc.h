@@ -276,6 +276,25 @@ typedef struct AACPCEInfo {
 } AACPCEInfo;
 
 /**
+ * Bit budget of one frame at the nominal bitrate, minus the part of it taken
+ * by an extension payload (the SBR data of HE-AAC).
+ */
+#define AAC_FRAME_BITS(s, avctx) \
+    ((double)(avctx)->bit_rate * (avctx)->frame_size / (avctx)->sample_rate - (s)->sbr_frame_bits)
+
+/**
+ * Largest size of the part of a frame the core coder writes: a raw data block
+ * is at most 6144 bits per channel, the extension payload included.
+ */
+#define AAC_MAX_FRAME_BITS(s) (6144 * (s)->channels - (s)->sbr_frame_bits)
+
+/**
+ * What the coders aim not to exceed per channel, which leaves room for the
+ * side information of the frame under the limit above.
+ */
+#define AAC_SOFT_FRAME_BITS(s) (5800 - (s)->sbr_frame_bits / (s)->channels)
+
+/**
  * AAC encoder context
  */
 typedef struct AACEncContext {
@@ -289,8 +308,11 @@ typedef struct AACEncContext {
     AVFloatDSPContext *fdsp;
     AACPCEInfo pce;                              ///< PCE data, if needed
     float *planar_samples[16];                   ///< saved preprocessed input
+    float *full_samples[16];                     ///< full rate samples buffer for HE-AAC
 
     int profile;                                 ///< copied from avctx
+    int sbr_frame_bits;                          ///< size of the SBR payload of the frame being coded
+    int core_rate;                               ///< sample rate of the coded signal (half of avctx->sample_rate for HE-AAC)
     int needs_pce;                               ///< flag for non-standard layout
     int needs_height_ext;                        ///< flag for PCE height extension
     LPCContext lpc;                              ///< used by TNS
@@ -326,6 +348,7 @@ typedef struct AACEncContext {
 
     AACEncDSPContext aacdsp;
     AACNMRCurves *nmr;                            ///< NMR coder scratch (NULL unless coder == nmr)
+    struct AACEncSBRContext *sbr_ctx;             ///< SBR encoder context
 
     struct {
         float *samples;

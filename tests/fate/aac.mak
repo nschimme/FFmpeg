@@ -322,6 +322,30 @@ fate-aac-sce-in-stereo: CMD = framecrc -i $(TARGET_SAMPLES)/aac/aac-sce-in-stere
 
 FATE_AAC_FRAMECRC-$(call FRAMECRC, MOV, AAC, ARESAMPLE_FILTER PAN_FILTER PCM_F32LE_ENCODER) += $(FATE_AAC_FRAMECRC)
 
+# HE-AAC encoding. The SBR high band is parametric and never matches the
+# waveform of the input, so instead of a distance to the source the streams
+# are checked to decode without a single logged error and to be detected
+# as HE-AAC by the decoder.
+define FATE_AAC_HE_TEST
+FATE_AAC_ENCODE_HE += fate-aac-he-encode-$(1)
+fate-aac-he-encode-$(1): tests/data/asynth-$(3)-$(2).wav
+fate-aac-he-encode-$(1): CMD = ffmpeg -auto_conversion_filters -i $(TARGET_PATH)/tests/data/asynth-$(3)-$(2).wav \
+    -c:a aac -profile:a aac_he -b:a $(4) -aframes 100 -fflags +bitexact -flags +bitexact -movflags +frag_keyframe+empty_moov -f mp4 - | \
+    ffmpeg -v error -auto_conversion_filters -f mov -i pipe: -f null - 2>&1
+FATE_AAC_ENCODE_HE_FFPROBE += fate-aac-he-probe-$(1)
+fate-aac-he-probe-$(1): tests/data/asynth-$(3)-$(2).wav
+fate-aac-he-probe-$(1): CMD = ffmpeg -auto_conversion_filters -i $(TARGET_PATH)/tests/data/asynth-$(3)-$(2).wav \
+    -c:a aac -profile:a aac_he -b:a $(4) -aframes 100 -fflags +bitexact -flags +bitexact -movflags +frag_keyframe+empty_moov -f mp4 - | \
+    probe -count_packets -show_entries stream=codec_name,profile,sample_rate,channels pipe:
+endef
+
+$(eval $(call FATE_AAC_HE_TEST,stereo-44100,2,44100,64k))
+$(eval $(call FATE_AAC_HE_TEST,mono-32000,1,32000,32k))
+$(eval $(call FATE_AAC_HE_TEST,stereo-48000-low,2,48000,24k))
+
+FATE_AAC_ENCODE-$(call TRANSCODE, AAC, MP4 MOV, WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER NULL_MUXER) += $(FATE_AAC_ENCODE_HE)
+FATE_AAC_ENCODE_FFPROBE-$(call TRANSCODE, AAC, MP4 MOV, WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER) += $(FATE_AAC_ENCODE_HE_FFPROBE)
+
 FATE_AAC_ENCODE-$(call TRANSCODE, AAC, MP4 MOV, WAV_MUXER WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER) += $(FATE_AAC_ENCODE)
 FATE_AAC_ENCODE_FFPROBE-$(call TRANSCODE, AAC, ADTS AAC, WAV_DEMUXER PCM_S16LE_DECODER ARESAMPLE_FILTER) += $(FATE_AAC_ENCODE_FFPROBE)
 
