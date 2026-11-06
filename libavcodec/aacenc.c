@@ -887,8 +887,7 @@ static void nmr_decide_stereo(AACEncContext *s, ChannelElement *cpe)
     SingleChannelElement *sce0 = &cpe->ch[0];
     SingleChannelElement *sce1 = &cpe->ch[1];
     IndividualChannelStream *ics = &sce0->ics;
-    const AVCodecContext *avctx = s->psy.avctx;
-    const float freq_mult = avctx->sample_rate / (1024.0f / ics->num_windows) / 2.0f;
+    const float freq_mult = s->core_rate / (1024.0f / ics->num_windows) / 2.0f;
     int is_count = 0;
 
     if (s->nmr) {
@@ -1574,9 +1573,9 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
              * the frame does not fit the decoder buffer: retry coarser (the
              * coders' legality caps shrink with lambda) */
             frame_bits = put_bits_count(&s->pb);
-            if (frame_bits < 6144 * s->channels - 3 || its >= 16)
+            if (frame_bits < AAC_MAX_FRAME_BITS(s) - 3 || its >= 16)
                 break;
-            s->lambda *= FFMIN(0.9f, (6144.0f * s->channels - 3) / frame_bits);
+            s->lambda *= FFMIN(0.9f, (float)(AAC_MAX_FRAME_BITS(s) - 3) / frame_bits);
             for (i = 0; i < s->chan_map[0]; i++) {
                 chans = s->chan_map[i + 1] == TYPE_CPE ? 2 : 1;
                 for (ch = 0; ch < chans; ch++)
@@ -1593,17 +1592,17 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
          * per-frame bits intentionally float around the nominal rate, so skip
          * the lambda rate loop and only intervene on a hard overflow. */
         if (s->options.coder == AAC_CODER_NMR && avctx->bit_rate_tolerance != 0 &&
-            frame_bits < 6144 * s->channels - 3)
+            frame_bits < AAC_MAX_FRAME_BITS(s) - 3)
             break;
 
         /* rate control stuff
          * allow between the nominal bitrate, and what psy's bit reservoir says to target
          * but drift towards the nominal bitrate always
          */
-        rate_bits = avctx->bit_rate * 1024 / avctx->sample_rate;
-        rate_bits = FFMIN(rate_bits, 6144 * s->channels - 3);
+        rate_bits = AAC_FRAME_BITS(s, avctx);
+        rate_bits = FFMIN(rate_bits, AAC_MAX_FRAME_BITS(s) - 3);
         too_many_bits = FFMAX(target_bits, rate_bits);
-        too_many_bits = FFMIN(too_many_bits, 6144 * s->channels - 3);
+        too_many_bits = FFMIN(too_many_bits, AAC_MAX_FRAME_BITS(s) - 3);
         too_few_bits = FFMIN(FFMAX(rate_bits - rate_bits/4, target_bits), too_many_bits);
 
         /* When strict bit-rate control is demanded */
@@ -1624,7 +1623,7 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 
         if (   its == 0 /* for steady-state Q-scale tracking */
             || (its < 5 && (frame_bits < too_few_bits || frame_bits > too_many_bits))
-            || frame_bits >= 6144 * s->channels - 3  )
+            || (frame_bits >= AAC_MAX_FRAME_BITS(s) - 3 && its < 24))
         {
             float ratio = ((float)rate_bits) / frame_bits;
 
@@ -1643,8 +1642,9 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
             }
             s->lambda = av_clipf(s->lambda * ratio, FLT_EPSILON, 65536.f);
 
-            /* Keep iterating if we must reduce and lambda is in the sky */
-            if (ratio > 0.9f && ratio < 1.1f) {
+            /* Keep iterating if we must reduce and lambda is in the sky, and
+             * until the frame fits the limit of a raw data block */
+            if (ratio > 0.9f && ratio < 1.1f && frame_bits < AAC_MAX_FRAME_BITS(s) - 3) {
                 break;
             } else {
                 if (is_mode || ms_mode || tns_mode || pred_mode) {
@@ -1891,6 +1891,8 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         }
     }
 
+    s->core_rate = avctx->sample_rate;
+
     /* Samplerate */
     for (int i = 0;; i++) {
         av_assert1(i < 13);
@@ -1901,11 +1903,11 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     }
 
     /* Bitrate limiting */
-    WARN_IF(1024.0 * avctx->bit_rate / avctx->sample_rate > 6144 * s->channels,
+    WARN_IF(1.0 * avctx->frame_size * avctx->bit_rate / avctx->sample_rate > 6144 * s->channels,
              "Too many bits %f > %d per frame requested, clamping to max\n",
-             1024.0 * avctx->bit_rate / avctx->sample_rate,
+             1.0 * avctx->frame_size * avctx->bit_rate / avctx->sample_rate,
              6144 * s->channels);
-    avctx->bit_rate = (int64_t)FFMIN(6144 * s->channels / 1024.0 * avctx->sample_rate,
+    avctx->bit_rate = (int64_t)FFMIN(6144 * s->channels / (double)avctx->frame_size * avctx->sample_rate,
                                      avctx->bit_rate);
 
     /* Profile and option setting */
@@ -1960,15 +1962,15 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
             for (; bw_i < FF_ARRAY_ELEMS(rates) - 2 && frame_br > rates[bw_i + 1]; bw_i++);
             s->bandwidth = bws[bw_i] + (int)((int64_t)(bws[bw_i + 1] - bws[bw_i]) *
                                              (frame_br - rates[bw_i]) / (rates[bw_i + 1] - rates[bw_i]));
-            s->bandwidth = FFMIN3(s->bandwidth, 22000, avctx->sample_rate / 2);
+            s->bandwidth = FFMIN3(s->bandwidth, 22000, s->core_rate / 2);
         } else {
             if (s->options.pns || s->options.intensity_stereo)
                 frame_br *= 1.15f;
             s->bandwidth = FFMAX(3000, AAC_CUTOFF_FROM_BITRATE(frame_br, 1,
-                                                               avctx->sample_rate));
+                                                               s->core_rate));
         }
 
-        s->bandwidth = FFMIN(FFMAX(s->bandwidth, 8000), avctx->sample_rate / 2);
+        s->bandwidth = FFMIN(FFMAX(s->bandwidth, 8000), s->core_rate / 2);
     }
 
     if (!(avctx->flags & AV_CODEC_FLAG_QSCALE) && avctx->bit_rate > 0) {
@@ -2002,7 +2004,8 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     s->psy.unbounded_pe = ((avctx->flags & AV_CODEC_FLAG_QSCALE) || s->options.rc == 1) &&
                           s->options.coder == AAC_CODER_NMR;
     if ((ret = ff_psy_init(&s->psy, avctx, 2, sizes, lengths,
-                           s->chan_map[0], grouping, s->bandwidth)) < 0)
+                           s->chan_map[0], grouping, s->bandwidth,
+                           s->core_rate)) < 0)
         return ret;
 
     ff_lpc_init(&s->lpc, 2*avctx->frame_size, TNS_MAX_ORDER, FF_LPC_TYPE_LEVINSON);

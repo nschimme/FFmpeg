@@ -111,7 +111,7 @@ void ff_aac_search_for_is(AACEncContext *s, AVCodecContext *avctx, ChannelElemen
     SingleChannelElement *sce0 = &cpe->ch[0];
     SingleChannelElement *sce1 = &cpe->ch[1];
     int start = 0, count = 0, w, w2, g, i, prev_sf1 = -1, prev_bt = -1, prev_is = 0;
-    const float freq_mult = avctx->sample_rate/(1024.0f/sce0->ics.num_windows)/2.0f;
+    const float freq_mult = s->core_rate/(1024.0f/sce0->ics.num_windows)/2.0f;
     uint8_t nextband1[128];
 
     if (!cpe->common_window)

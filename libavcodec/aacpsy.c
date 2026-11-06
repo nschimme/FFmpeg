@@ -401,9 +401,9 @@ static av_cold int psy_3gpp_init(FFPsyContext *ctx) {
     }
 
     pctx->chan_bitrate = chan_bitrate;
-    pctx->frame_bits   = FFMIN(2560, chan_bitrate * AAC_BLOCK_SIZE_LONG / ctx->avctx->sample_rate);
-    pctx->pe.min       =  8.0f * AAC_BLOCK_SIZE_LONG * bandwidth / (ctx->avctx->sample_rate * 2.0f);
-    pctx->pe.max       = 12.0f * AAC_BLOCK_SIZE_LONG * bandwidth / (ctx->avctx->sample_rate * 2.0f);
+    pctx->frame_bits   = FFMIN(2560, chan_bitrate * AAC_BLOCK_SIZE_LONG / ctx->sample_rate);
+    pctx->pe.min       =  8.0f * AAC_BLOCK_SIZE_LONG * bandwidth / (ctx->sample_rate * 2.0f);
+    pctx->pe.max       = 12.0f * AAC_BLOCK_SIZE_LONG * bandwidth / (ctx->sample_rate * 2.0f);
     ctx->bitres.size   = 6144 - pctx->frame_bits;
     ctx->bitres.size  -= ctx->bitres.size % 8;
     pctx->fill_level   = ctx->bitres.size;
@@ -411,8 +411,8 @@ static av_cold int psy_3gpp_init(FFPsyContext *ctx) {
     for (j = 0; j < 2; j++) {
         AacPsyCoeffs *coeffs = pctx->psy_coef[j];
         const uint8_t *band_sizes = ctx->bands[j];
-        float line_to_frequency = ctx->avctx->sample_rate / (j ? 256.f : 2048.0f);
-        float avg_chan_bits = chan_bitrate * (j ? 128.0f : 1024.0f) / ctx->avctx->sample_rate;
+        float line_to_frequency = ctx->sample_rate / (j ? 256.f : 2048.0f);
+        float avg_chan_bits = chan_bitrate * (j ? 128.0f : 1024.0f) / ctx->sample_rate;
         /* reference encoder uses 2.4% here instead of 60% like the spec says */
         float bark_pe = 0.024f * PSY_3GPP_BITS_TO_PE(avg_chan_bits) / num_bark;
         float en_spread_low = j ? PSY_3GPP_EN_SPREAD_LOW_S : PSY_3GPP_EN_SPREAD_LOW_L;
@@ -759,7 +759,7 @@ static void psy_3gpp_analyze_channel(FFPsyContext *ctx, int channel,
     AacPsyCoeffs  *coeffs      = pctx->psy_coef[wi->num_windows == 8];
     const float avoid_hole_thr = wi->num_windows == 8 ? PSY_3GPP_AH_THR_SHORT : PSY_3GPP_AH_THR_LONG;
     const int bandwidth        = ctx->cutoff ? ctx->cutoff : AAC_CUTOFF(ctx->avctx);
-    const int cutoff           = bandwidth * 2048 / wi->num_windows / ctx->avctx->sample_rate;
+    const int cutoff           = bandwidth * 2048 / wi->num_windows / ctx->sample_rate;
 
     //calculate energies, initial thresholds and related values - 5.4.2 "Threshold Calculation"
     calc_thr_3gpp(wi, num_bands, pch, band_sizes, coefs, cutoff);
@@ -959,7 +959,7 @@ static void psy_3gpp_analyze_channel(FFPsyContext *ctx, int channel,
         float lim  = qmode ? PSY_THRFL_QUALITY : PSY_THRFL_CBR;
         float knee = qmode ? 0.0f : PSY_THRFL_CBR_KNEE;
         float lo   = ff_exp10f(-lim / 10.0f);
-        float l2f  = ctx->avctx->sample_rate / 2.0f /
+        float l2f  = ctx->sample_rate / 2.0f /
                      (wi->num_windows == 1 ? 1024.0f : 128.0f);
         for (w = 0; w < wi->num_windows*16; w += 16) {
             int start = 0;

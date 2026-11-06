@@ -68,7 +68,7 @@ static void search_for_quantizers_twoloop(AVCodecContext *avctx,
                                           const float lambda)
 {
     int start = 0, i, w, w2, g, recomprd;
-    int destbits = avctx->bit_rate * 1024.0 / avctx->sample_rate
+    int destbits = AAC_FRAME_BITS(s, avctx)
         / ((avctx->flags & AV_CODEC_FLAG_QSCALE) ? 2.0f : avctx->ch_layout.nb_channels)
         * (lambda / 120.f);
     int toomanybits, toofewbits;
@@ -146,7 +146,7 @@ static void search_for_quantizers_twoloop(AVCodecContext *avctx,
          * When using a constant Q-scale, don't adjust bits, just use RD
          * Don't let it go overboard, though... 8x psy target is enough
          */
-        toomanybits = 5800;
+        toomanybits = AAC_SOFT_FRAME_BITS(s);
         toofewbits = destbits / 16;
 
         /** Don't offset scalers, just RD */
@@ -172,17 +172,17 @@ static void search_for_quantizers_twoloop(AVCodecContext *avctx,
     {
         int wlen = 1024 / sce->ics.num_windows;
         /* the bandwidth is fixed at init and shared with the psy model */
-        cutoff = s->bandwidth * 2 * wlen / avctx->sample_rate;
-        pns_start_pos = NOISE_LOW_LIMIT * 2 * wlen / avctx->sample_rate;
+        cutoff = s->bandwidth * 2 * wlen / s->core_rate;
+        pns_start_pos = NOISE_LOW_LIMIT * 2 * wlen / s->core_rate;
     }
 
     /**
      * for values above this the decoder might end up in an endless loop
      * due to always having more bits than what can be encoded.
      */
-    destbits = FFMIN(destbits, 5800);
-    toomanybits = FFMIN(toomanybits, 5800);
-    toofewbits = FFMIN(toofewbits, 5800);
+    destbits = FFMIN(destbits, AAC_SOFT_FRAME_BITS(s));
+    toomanybits = FFMIN(toomanybits, AAC_SOFT_FRAME_BITS(s));
+    toofewbits = FFMIN(toofewbits, AAC_SOFT_FRAME_BITS(s));
     /**
      * XXX: some heuristic to determine initial quantizers will reduce search time
      * determine zero bands and upper distortion limits
@@ -394,7 +394,7 @@ static void search_for_quantizers_twoloop(AVCodecContext *avctx,
                 recomprd = 1;
                 for (i = 0; i < 128; i++) {
                     if (sce->sf_idx[i] < (SCALE_MAX_POS - SCALE_DIV_512)) {
-                        int maxsf_i = (tbits > 5800) ? SCALE_MAX_POS : maxsf[i];
+                        int maxsf_i = (tbits > AAC_SOFT_FRAME_BITS(s)) ? SCALE_MAX_POS : maxsf[i];
                         int new_sf = FFMIN(maxsf_i, sce->sf_idx[i] + qstep);
                         if (new_sf != sce->sf_idx[i]) {
                             sce->sf_idx[i] = new_sf;
