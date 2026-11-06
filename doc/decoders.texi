@@ -304,6 +304,36 @@ BOXX files.
 A description of some of the currently available audio decoders
 follows.
 
+@section libfaad3
+
+libfaad3 AAC (Advanced Audio Coding) decoder wrapper using libfaad3.
+
+libfaad3 is an extremely fast, high-throughput AAC decoder, outperforming native and
+other external decoders in decoding speed while delivering competitive audio quality.
+
+Requires the presence of the libfaad3 headers and library during
+configuration. You need to explicitly configure the build with
+@code{--enable-libfaad3}.
+
+@subsection Options
+
+@table @option
+@item downmix
+Request a specific channel layout from the decoder (@samp{stereo} or @samp{mono}).
+
+@item drc_scale
+Percentage of dynamic range compression to apply [0.0 - 1.0].
+
+@item drc_boost
+Dynamic Range Control boost factor [0 - 127].
+
+@item drc_cut
+Dynamic Range Control attenuation factor [0 - 127].
+
+@item drc_target_level
+Target output loudness in dBFS (-31.75 to -10.0, 0 = off).
+@end table
+
 @section ac3
 
 AC-3 audio decoder.

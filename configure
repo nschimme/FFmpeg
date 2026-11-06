@@ -232,6 +232,7 @@ External library support:
                            and libraw1394 [no]
   --enable-libdvdnav       enable libdvdnav, needed for DVD demuxing [no]
   --enable-libdvdread      enable libdvdread, needed for DVD demuxing [no]
+  --enable-libfaad3        enable AAC decoding via libfaad3 [no]
   --enable-libfdk-aac      enable AAC de/encoding via libfdk-aac [no]
   --enable-libfdk-xhe-aac  enable xHE-AAC encoding via libfdk-xhe-aac [no]
   --enable-libflite        enable flite (voice synthesis) support via libflite [no]
@@ -2062,6 +2063,7 @@ EXTERNAL_LIBRARY_LIST="
     libcodec2
     libdav1d
     libdc1394
+    libfaad3
     libflite
     libfontconfig
     libfreetype
@@ -3802,6 +3804,7 @@ libdav1d_decoder_deps="libdav1d"
 libdav1d_decoder_select="itut_t35"
 libdavs2_decoder_deps="libdavs2"
 libdavs2_decoder_select="avs2_parser"
+libfaad3_decoder_deps="libfaad3"
 libfdk_aac_decoder_deps="libfdk_aac"
 libfdk_aac_encoder_deps="libfdk_aac"
 libfdk_aac_encoder_select="audio_frame_queue"
@@ -7250,6 +7253,8 @@ enabled libdc1394         && require_pkg_config libdc1394 libdc1394-2 dc1394/dc1
 enabled libdrm            && check_pkg_config libdrm libdrm xf86drm.h drmGetVersion
 enabled libdvdnav         && require_pkg_config libdvdnav "dvdnav >= 6.1.0" dvdnav/dvdnav.h dvdnav_open2
 enabled libdvdread        && require_pkg_config libdvdread "dvdread >= 6.1.1" dvdread/dvd_reader.h DVDOpen2
+enabled libfaad3          && { check_pkg_config libfaad3 faad3 faad3.h faad_decoder_open ||
+                               require libfaad3 faad3.h faad_decoder_open -lfaad3; }
 enabled libfdk_aac        && { check_pkg_config libfdk_aac fdk-aac "fdk-aac/aacenc_lib.h" aacEncOpen ||
                                { require libfdk_aac fdk-aac/aacenc_lib.h aacEncOpen -lfdk-aac &&
                                  warn "using libfdk without pkg-config"; } }
