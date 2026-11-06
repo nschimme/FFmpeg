@@ -318,6 +318,14 @@ Go to @url{http://sourceforge.net/projects/opencore-amr/} and follow the
 instructions for installing the library.
 Then pass @code{--enable-libvo-amrwbenc} to configure to enable it.
 
+@subsection FAAD library
+
+FFmpeg can make use of the FAAD library (libfaad3) for AAC decoding.
+
+Go to @url{https://github.com/FreewareAdvancedAudio/faac} and follow the
+instructions for installing the library.
+Then pass @code{--enable-libfaad3} to configure to enable it.
+
 @subsection Fraunhofer AAC library
 
 FFmpeg can make use of the Fraunhofer AAC library for AAC decoding & encoding.
@@ -1308,7 +1316,7 @@ following image formats are supported:
 @item 8SVX exponential       @tab     @tab  X
 @item 8SVX fibonacci         @tab     @tab  X
 @item AAC                    @tab EX  @tab  X
-    @tab encoding supported through internal encoder and external library libfdk-aac
+    @tab encoding supported through internal encoder and external library libfdk-aac, decoding supported through internal decoder and external libraries libfdk-aac and libfaad3
 @item AAC+                   @tab  E  @tab  IX
     @tab encoding supported through external library libfdk-aac
 @item AC-3                   @tab IX  @tab  IX
