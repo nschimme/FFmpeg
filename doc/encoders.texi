@@ -642,6 +642,121 @@ Sets the maximum delay in milliseconds. Lower delays than 20ms will very quickly
 decrease quality.
 @end table
 
+@anchor{libfaac-enc}
+@section libfaac
+
+libfaac AAC (Advanced Audio Coding) encoder wrapper using FAAC 3.x ABI.
+
+FAAC is an open-source, dependency-free AAC encoder optimized for ultra-high-throughput
+pipeline encoding while offering excellent perceptual quality. It offers substantially
+higher encoding speeds than native and FDK-AAC encoders, even when compared to the native
+encoder's fast mode.
+
+Requires the presence of the libfaac headers and library during
+configuration. You need to explicitly configure the build with
+@code{--enable-libfaac}.
+
+FAAC is licensed under the LGPLv2.1-or-later.
+
+@subsection Options
+
+The following private options are supported by the @option{libfaac} encoder:
+
+@table @option
+@item mpegversion
+Set the MPEG version.
+@table @option
+@item mpeg4
+MPEG-4 Audio.
+@item mpeg2
+MPEG-2 Audio.
+@end table
+Default is @samp{mpeg4}.
+
+@item object_type
+Set the AAC object type / profile.
+@table @option
+@item auto
+Auto profile selection.
+@item lc
+AAC Low Complexity (AAC-LC).
+@item he_aac_v1
+HE-AAC v1 (AAC-LC + SBR).
+@item he_aac_v2
+HE-AAC v2 (AAC-LC + SBR + PS).
+@end table
+Default is @samp{auto}. Note that HE-AAC requires MPEG-4.
+
+@item rate_control
+Set rate control mode.
+@table @option
+@item auto
+Auto rate control.
+@item abr
+Average bit rate.
+@item vbr
+Variable bit rate (driven by @option{q} / @option{global_quality}).
+@item cbr
+Constant bit rate.
+@end table
+Default is @samp{auto}.
+
+@item stereo_mode / joint_mode
+Set stereo mode.
+@table @option
+@item lr
+Independent (L/R) stereo.
+@item ms
+Mid/Side stereo.
+@item is
+Intensity stereo.
+@item auto
+Per-band mix of M/S and Intensity.
+@end table
+Default is @samp{auto}.
+
+@item short_control
+Set short block control mode.
+@table @option
+@item normal
+Let block switching decide.
+@item noshort
+Force long blocks only.
+@item nolong
+Force short blocks only.
+@end table
+Default is @samp{normal}.
+
+@item aac_tns / tns
+Enable or disable Temporal Noise Shaping (TNS). Default is 1 (enabled).
+
+@item aac_pns / pns
+Enable or disable Perceptual Noise Substitution (PNS). Default is 1 (enabled).
+
+@item peak_bit_rate / max_bit_rate
+Set whole-stream peak bitrate ceiling in bits/s (0 = unlimited).
+
+@item drc_profile
+Set dynamic range control (DRC) profile.
+@table @option
+@item off
+No DRC fill element (default).
+@item film
+Film standard.
+@item film_light
+Film light.
+@item music
+Music standard.
+@item music_light
+Music light.
+@item speech
+Speech standard.
+@end table
+
+@item drc_ref_level
+Set program reference level in LUFS/dBFS (-31.75 to 0.0, default -23.0).
+@end table
+
 @anchor{libfdk-aac-enc}
 @section libfdk_aac
 
