@@ -57,6 +57,7 @@
 #include "libavcodec/exif.h"
 #include "libavcodec/flac.h"
 #include "libavcodec/hevc/hevc.h"
+#include "libavcodec/mpeg4audio.h"
 #include "libavcodec/mpegaudiodata.h"
 #include "libavcodec/mpegaudiodecheader.h"
 #include "libavcodec/mlp_parse.h"
@@ -12371,6 +12372,42 @@ static void fix_stream_ids(AVFormatContext *s)
     }
 }
 
+/* Delay of the SBR decoder in output samples (2 * 481), see ISO/IEC 14496-3. */
+#define MOV_SBR_DECODER_DELAY 962
+
+/**
+ * Get the adjustment of the gapless priming of an HE-AAC stream.
+ *
+ * Decoders skip the delay of the SBR decoder in addition to the priming, as
+ * Apple's and fdkaac's priming leaves it out. Nero's priming covers it, so the
+ * delay is taken off to get the same samples from those decoders.
+ */
+static int mov_get_sbr_priming_adjust(MOVContext *mov, AVStream *st)
+{
+    const AVDictionaryEntry *encoder = av_dict_get(mov->fc->metadata, "encoder", NULL, 0);
+    MPEG4AudioConfig cfg;
+
+    if (!encoder)
+        encoder = av_dict_get(st->metadata, "encoder", NULL, 0);
+
+    if (!encoder || !av_strstart(encoder->value, "Nero AAC codec", NULL))
+        return 0;
+
+    if (st->codecpar->codec_id != AV_CODEC_ID_AAC ||
+        st->codecpar->initial_padding < MOV_SBR_DECODER_DELAY ||
+        !st->codecpar->extradata_size)
+        return 0;
+
+    if (avpriv_mpeg4audio_get_config2(&cfg, st->codecpar->extradata,
+                                      st->codecpar->extradata_size, 1, mov->fc) < 0)
+        return 0;
+
+    if (cfg.sbr != 1 || cfg.ext_sample_rate != 2 * cfg.sample_rate)
+        return 0;
+
+    return -MOV_SBR_DECODER_DELAY;
+}
+
 static int mov_read_header(AVFormatContext *s)
 {
     MOVContext *mov = s->priv_data;
@@ -12469,7 +12506,10 @@ static int mov_read_header(AVFormatContext *s)
 
         if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
             st->codecpar->codec_id   == AV_CODEC_ID_AAC) {
-            sti->skip_samples = st->codecpar->initial_padding;
+            sc->sbr_priming_adjust = mov_get_sbr_priming_adjust(mov, st);
+            sti->skip_samples = st->codecpar->initial_padding + sc->sbr_priming_adjust;
+            if (sc->sbr_priming_adjust && sti->first_discard_sample)
+                sti->first_discard_sample += sc->sbr_priming_adjust;
         }
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && sc->nb_frames_for_fps > 0 && sc->duration_for_fps > 0)
             av_reduce(&st->avg_frame_rate.num, &st->avg_frame_rate.den,
@@ -12812,7 +12852,7 @@ static int mov_finalize_packet(AVFormatContext *s, AVStream *st, AVIndexEntry *s
         duration = av_rescale_q(duration, st->time_base, (AVRational){ 1, st->codecpar->sample_rate });
 
         if (!ffstream(st)->first_discard_sample)
-            ffstream(st)->first_discard_sample = av_sat_add64(pts, duration);
+            ffstream(st)->first_discard_sample = av_sat_add64(pts, duration) + sc->sbr_priming_adjust;
         if (!ffstream(st)->last_discard_sample)
             ffstream(st)->last_discard_sample  = total;
     }
@@ -13179,6 +13219,7 @@ static int mov_seek_stream(AVFormatContext *s, AVStream *st, int64_t timestamp, 
 static int64_t mov_get_skip_samples(AVStream *st, int sample)
 {
     FFStream *const sti = ffstream(st);
+    const MOVStreamContext *sc = st->priv_data;
     int64_t first_ts = sti->index_entries[0].timestamp;
     int64_t ts = sti->index_entries[sample].timestamp;
     int64_t off;
@@ -13189,7 +13230,7 @@ static int64_t mov_get_skip_samples(AVStream *st, int sample)
     /* compute skip samples according to stream initial_padding, seek ts and first ts */
     off = av_rescale_q(ts - first_ts, st->time_base,
                        (AVRational){1, st->codecpar->sample_rate});
-    return FFMAX(st->codecpar->initial_padding - off, 0);
+    return FFMAX(st->codecpar->initial_padding + sc->sbr_priming_adjust - off, 0);
 }
 
 static int mov_read_seek(AVFormatContext *s, int stream_index, int64_t sample_time, int flags)
