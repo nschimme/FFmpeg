@@ -718,6 +718,19 @@ audio_match(){
     tests/audiomatch${HOSTEXECSUF} $decfile $trefile
 }
 
+# Like audio_match, but on a stream copy without any gapless information.
+audio_match_remux(){
+    sample=$(target_path $1)
+    trefile=$2
+
+    remuxfile="${outdir}/${test}.m4a"
+    cleanfiles="$cleanfiles $remuxfile"
+
+    ffmpeg -i "$sample" -c copy -f mp4 -use_editlist 0 -bitexact -fflags +bitexact -flags +bitexact \
+        -y $(target_path $remuxfile) || return
+    audio_match $remuxfile $trefile
+}
+
 concat(){
     template=$1
     sample=$2
