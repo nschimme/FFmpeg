@@ -589,6 +589,10 @@ struct AACDecContext {
     int warned_gain_control;
     int warned_he_aac_mono;
 
+    int sbr_delay_primed;   ///< the container signaled the encoder priming
+    int sbr_delay_added;    ///< the SBR decoder delay was added to the samples to skip
+    int sbr_delay_unpadded; ///< samples of the delay that are left to take off the end padding
+
     int is_fixed;
 };
 

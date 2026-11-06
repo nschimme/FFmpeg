@@ -570,6 +570,10 @@ static av_cold void flush(AVCodecContext *avctx)
         }
     }
 
+    ac->sbr_delay_primed   = 0;
+    ac->sbr_delay_added    = 0;
+    ac->sbr_delay_unpadded = 0;
+
 #if CONFIG_AAC_DECODER
     ff_aac_usac_reset_state(ac, &ac->oc[1]);
 #endif
@@ -2351,6 +2355,73 @@ static int aac_decode_er_frame(AVCodecContext *avctx, AVFrame *frame,
     return 0;
 }
 
+/**
+ * Delay of the SBR decoder in output samples (2 * 481), see ISO/IEC 14496-3.
+ */
+#define SBR_DECODER_DELAY 962
+
+/**
+ * Skip the delay of the SBR decoder in addition to the encoder priming that a
+ * container signals, as the priming of most encoders does not cover it.
+ * Streams for which the container does not signal any priming are decoded as
+ * they are, like the conformance streams.
+ *
+ * Packet side data is forwarded to the frame, so the samples to skip and to
+ * discard at the end are adjusted there.
+ */
+static void adjust_sbr_decoder_delay(AACDecContext *ac, AVFrame *frame)
+{
+    AVCodecContext *avctx = ac->avctx;
+    const MPEG4AudioConfig *m4ac = &ac->oc[1].m4ac;
+    AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_SKIP_SAMPLES);
+    uint32_t skip = sd && sd->size >= 10 ? AV_RL32(sd->data) : 0;
+
+    if (m4ac->sbr != 1 || m4ac->ext_sample_rate != 2 * m4ac->sample_rate ||
+        avctx->initial_padding <= 0)
+        return;
+
+    /* The timestamps are those of the container, which does not count the
+     * delay in the priming. */
+    if (avctx->pkt_timebase.num) {
+        int64_t delay = av_rescale_q(SBR_DECODER_DELAY, (AVRational){ 1, avctx->sample_rate },
+                                     avctx->pkt_timebase);
+        if (frame->pts != AV_NOPTS_VALUE)
+            frame->pts = av_sat_sub64(frame->pts, delay);
+        if (frame->pkt_dts != AV_NOPTS_VALUE)
+            frame->pkt_dts = av_sat_sub64(frame->pkt_dts, delay);
+    }
+
+    /* Only the priming of the container counts, not the preroll of a seek. */
+    if (skip && skip + SBR_DECODER_DELAY >= avctx->initial_padding)
+        ac->sbr_delay_primed = 1;
+    if (!ac->sbr_delay_primed)
+        return;
+
+    /* Frames that the container discards are skipped as a whole, the delay
+     * applies to the first one that is not. */
+    if (!ac->sbr_delay_added && !(frame->flags & AV_FRAME_FLAG_DISCARD)) {
+        if (!sd) {
+            sd = av_frame_new_side_data(frame, AV_FRAME_DATA_SKIP_SAMPLES, 10);
+            if (!sd)
+                return;
+            memset(sd->data, 0, sd->size);
+        }
+        AV_WL32(sd->data, (skip ? skip : avctx->internal->skip_samples) + SBR_DECODER_DELAY);
+        ac->sbr_delay_added    = 1;
+        ac->sbr_delay_unpadded = SBR_DECODER_DELAY;
+    }
+
+    /* The delayed samples belong to the signal and not to the padding, which
+     * can span more than one frame. */
+    if (ac->sbr_delay_unpadded && sd && sd->size >= 10) {
+        uint32_t padding = AV_RL32(sd->data + 4);
+        uint32_t taken   = FFMIN(padding, ac->sbr_delay_unpadded);
+
+        AV_WL32(sd->data + 4, padding - taken);
+        ac->sbr_delay_unpadded -= taken;
+    }
+}
+
 static int decode_frame_ga(AVCodecContext *avctx, AACDecContext *ac,
                            GetBitContext *gb, int *got_frame_ptr)
 {
@@ -2514,6 +2585,7 @@ static int decode_frame_ga(AVCodecContext *avctx, AACDecContext *ac,
         ac->frame->nb_samples = samples;
         ac->frame->sample_rate = avctx->sample_rate;
         ac->frame->flags |= AV_FRAME_FLAG_KEY;
+        adjust_sbr_decoder_delay(ac, ac->frame);
         *got_frame_ptr = 1;
     } else {
         av_frame_unref(ac->frame);
