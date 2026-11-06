@@ -27,6 +27,9 @@ FATE_GAPLESS-$(call TRANSCODE, PCM_S16LE AAC, WAV MOV, AAC_DEMUXER ARESAMPLE_FIL
 FATE_GAPLESS-$(call TRANSCODE, PCM_S16LE AAC, WAV MOV, AAC_DEMUXER ARESAMPLE_FILTER) += fate-audiomatch-afconvert-44100-stereo-he-adts  fate-audiomatch-afconvert-44100-stereo-he-m4a
 FATE_GAPLESS-$(call TRANSCODE, PCM_S16LE AAC, WAV MOV, AAC_DEMUXER ARESAMPLE_FILTER) += fate-audiomatch-afconvert-16000-stereo-he2-adts fate-audiomatch-afconvert-16000-stereo-he2-m4a
 FATE_GAPLESS-$(call TRANSCODE, PCM_S16LE AAC, WAV MOV, AAC_DEMUXER ARESAMPLE_FILTER) += fate-audiomatch-afconvert-44100-stereo-he2-adts fate-audiomatch-afconvert-44100-stereo-he2-m4a
+# HE-AAC without any priming has to be decoded as is.
+FATE_GAPLESS-$(call TRANSCODE, PCM_S16LE AAC, WAV MOV, MP4_MUXER ARESAMPLE_FILTER) += fate-audiomatch-afconvert-44100-stereo-he-m4a-nogapless
+
 FATE_GAPLESS-$(call TRANSCODE, PCM_S16LE AAC, WAV MOV, AAC_DEMUXER ARESAMPLE_FILTER) += fate-audiomatch-afconvert-16000-stereo-lc-adts  fate-audiomatch-afconvert-16000-stereo-lc-m4a
 FATE_GAPLESS-$(call TRANSCODE, PCM_S16LE AAC, WAV MOV, AAC_DEMUXER ARESAMPLE_FILTER) += fate-audiomatch-afconvert-44100-stereo-lc-adts  fate-audiomatch-afconvert-44100-stereo-lc-m4a
 
@@ -99,6 +102,7 @@ fate-audiomatch-faac-44100-mono-lc-m4a:  CMD = audio_match $(TARGET_SAMPLES)/aud
 fate-audiomatch-faac-44100-stereo-lc-adts: CMD = audio_match $(TARGET_SAMPLES)/audiomatch/tones_faac_44100_stereo_aac_lc.adts  $(SAMPLES)/audiomatch/tones_44100_stereo.wav
 fate-audiomatch-faac-44100-stereo-lc-m4a:  CMD = audio_match $(TARGET_SAMPLES)/audiomatch/tones_faac_44100_stereo_aac_lc.m4a   $(SAMPLES)/audiomatch/tones_44100_stereo.wav
 
+fate-audiomatch-afconvert-44100-stereo-he-m4a-nogapless: CMD = audio_match_remux $(TARGET_SAMPLES)/audiomatch/tones_afconvert_44100_stereo_aac_he.m4a $(SAMPLES)/audiomatch/tones_44100_stereo.wav
 fate-audiomatch-fdkaac-44100-stereo-lc-m4a:  CMD = audio_match $(TARGET_SAMPLES)/audiomatch/tones_fdkaac_44100_stereo_aac_lc.m4a   $(SAMPLES)/audiomatch/tones_44100_stereo.wav
 fate-audiomatch-fdkaac-44100-stereo-he-m4a:  CMD = audio_match $(TARGET_SAMPLES)/audiomatch/tones_fdkaac_44100_stereo_aac_he.m4a   $(SAMPLES)/audiomatch/tones_44100_stereo.wav
 fate-audiomatch-fdkaac-44100-stereo-he2-m4a: CMD = audio_match $(TARGET_SAMPLES)/audiomatch/tones_fdkaac_44100_stereo_aac_he2.m4a  $(SAMPLES)/audiomatch/tones_44100_stereo.wav
