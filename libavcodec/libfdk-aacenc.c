@@ -420,7 +420,9 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
 
     avctx->frame_size = info.frameLength;
 #if FDKENC_VER_AT_LEAST(4, 0) // 4.0.0
-    avctx->initial_padding = info.nDelay;
+    // The delay of the SBR decoder is not part of the priming, decoders skip it
+    // in addition to it.
+    avctx->initial_padding = info.nDelayCore;
 #else
     avctx->initial_padding = info.encoderDelay;
 #endif
