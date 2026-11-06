@@ -49,6 +49,7 @@
 #include "aac.h"
 #include "aactab.h"
 #include "aacenc.h"
+#include "aacenc_sbr.h"
 #include "aacenctab.h"
 #include "aacenc_utils.h"
 
@@ -473,7 +474,7 @@ static void put_pce(PutBitContext *pb, AVCodecContext *avctx)
 
     put_bits(pb, 4, 0);
 
-    put_bits(pb, 2, avctx->profile);
+    put_bits(pb, 2, s->sbr_ctx ? AV_PROFILE_AAC_LOW : avctx->profile);
     put_bits(pb, 4, s->samplerate_index);
 
     put_bits(pb, 4, pce->num_ele[0]); /* Front */
@@ -535,8 +536,9 @@ static int put_audio_specific_config(AVCodecContext *avctx, int chcfg)
         return AVERROR(ENOMEM);
 
     init_put_bits(&pb, avctx->extradata, max_size);
-    put_bits(&pb, 5, s->profile+1); //profile
-    put_bits(&pb, 4, s->samplerate_index); //sample rate index
+    /* HE-AAC signals the AAC-LC core codec, the SBR extension follows below */
+    put_bits(&pb, 5, s->sbr_ctx ? AOT_AAC_LC : s->profile + 1); //profile
+    put_bits(&pb, 4, s->samplerate_index); //sample rate index (core rate)
     put_bits(&pb, 4, chcfg);
     //GASpecificConfig
     put_bits(&pb, 1, 0); //frame length - 1024 samples
@@ -545,10 +547,18 @@ static int put_audio_specific_config(AVCodecContext *avctx, int chcfg)
     if (s->needs_pce)
         put_pce(&pb, avctx);
 
-    //Explicitly Mark SBR absent
+    //Explicitly signal SBR presence or absence
     put_bits(&pb, 11, 0x2b7); //sync extension
     put_bits(&pb, 5,  AOT_SBR);
-    put_bits(&pb, 1,  0);
+    put_bits(&pb, 1,  !!s->sbr_ctx);
+    if (s->sbr_ctx) {
+        put_bits(&pb, 4, ff_aac_sbr_enc_get_full_rate_idx(s->sbr_ctx));
+        if (s->channels == 1) {
+            // Explicitly signal PS is NOT present for mono HE-AAC v1
+            put_bits(&pb, 11, 0x548); // PS sync extension
+            put_bits(&pb, 1, 0);      // psPresentFlag = 0
+        }
+    }
     flush_put_bits(&pb);
     avctx->extradata_size = put_bytes_output(&pb);
 
@@ -1263,10 +1273,36 @@ static void put_bitstream_info(AACEncContext *s, const char *name)
 static void copy_input_samples(AACEncContext *s, const AVFrame *frame)
 {
     int ch;
-    int end = 2048 + (frame ? frame->nb_samples : 0);
     const uint8_t *channel_map = s->reorder_map;
 
+    if (s->sbr_ctx) {
+        /* HE-AAC: keep the last two input frames at the full rate for the SBR
+         * analysis, and feed the core a 2:1 decimated copy. */
+        float *full_ptrs[16], *core_ptrs[16];
+
+        for (ch = 0; ch < s->channels; ch++) {
+            float *full = s->full_samples[ch];
+            float *cur = full + AAC_SBR_FULL_BUF_SIZE - 2048;
+
+            memmove(full, full + 2048, (AAC_SBR_FULL_BUF_SIZE - 2048) * sizeof(*full));
+            if (frame)
+                memcpy(cur, frame->extended_data[channel_map[ch]],
+                       frame->nb_samples * sizeof(*full));
+            memset(cur + (frame ? frame->nb_samples : 0), 0,
+                   (frame ? 2048 - frame->nb_samples : 2048) * sizeof(*full));
+
+            memcpy(&s->planar_samples[ch][0],    &s->planar_samples[ch][1024], 1024 * sizeof(float));
+            memcpy(&s->planar_samples[ch][1024], &s->planar_samples[ch][2048], 1024 * sizeof(float));
+            full_ptrs[ch] = cur;
+            core_ptrs[ch] = &s->planar_samples[ch][2048];
+        }
+
+        ff_aac_sbr_enc_resample(s->sbr_ctx, s->channels, 1024, full_ptrs, core_ptrs);
+        return;
+    }
+
     /* copy and remap input samples */
+    int end = 2048 + (frame ? frame->nb_samples : 0);
     for (ch = 0; ch < s->channels; ch++) {
         /* copy last 1024 samples of previous frame to the start of the current frame */
         memcpy(&s->planar_samples[ch][1024], &s->planar_samples[ch][2048], 1024 * sizeof(s->planar_samples[0][0]));
@@ -1309,6 +1345,22 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
 
     if (!avctx->frame_num)
         return 0;
+
+    float *sbr_full_ptrs[16];
+
+    if (s->profile == AV_PROFILE_AAC_HE) {
+        for (ch = 0; ch < s->channels; ch++)
+            sbr_full_ptrs[ch] = s->full_samples[ch] + AAC_SBR_FULL_BUF_SIZE - 4096 - AAC_SBR_ANALYSIS_DELAY;
+        ff_aac_sbr_enc_process_frame(s->sbr_ctx, s->channels, 1024, sbr_full_ptrs);
+
+        s->sbr_frame_bits = 0;
+        for (i = 0, start_ch = 0; i < s->chan_map[0]; i++) {
+            tag = s->chan_map[i + 1];
+            if (tag != TYPE_LFE)
+                s->sbr_frame_bits += ff_aac_sbr_enc_write_payload(s->sbr_ctx, NULL, tag, start_ch);
+            start_ch += tag == TYPE_CPE ? 2 : 1;
+        }
+    }
 
     start_ch = 0;
     for (i = 0; i < s->chan_map[0]; i++) {
@@ -1701,10 +1753,21 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
         }
     }
 
+    if (s->sbr_ctx) {
+        start_ch = 0;
+        for (i = 0; i < s->chan_map[0]; i++) {
+            tag = s->chan_map[i+1];
+            chans = tag == TYPE_CPE ? 2 : 1;
+            if (tag != TYPE_LFE) /* LFE elements cannot carry SBR */
+                ff_aac_sbr_enc_write_payload(s->sbr_ctx, &s->pb, tag, start_ch);
+            start_ch += chans;
+        }
+    }
     put_bits(&s->pb, 3, TYPE_END);
     flush_put_bits(&s->pb);
 
-    s->last_frame_pb_count = put_bits_count(&s->pb);
+    /* the rate control budgets (AAC_FRAME_BITS) exclude the SBR payload */
+    s->last_frame_pb_count = put_bits_count(&s->pb) - s->sbr_frame_bits;
 
     /* NMR rate accounting: how many bits the frame really took beyond what the
      * trellis counted; feeds the next frame's budget correction */
@@ -1767,6 +1830,8 @@ static av_cold int aac_encode_end(AVCodecContext *avctx)
     av_freep(&s->cpe);
     av_freep(&s->fdsp);
     av_freep(&s->nmr);
+    ff_aac_sbr_enc_close(s->sbr_ctx);
+    s->sbr_ctx = NULL;
     ff_af_queue_close(&s->afq);
     return 0;
 }
@@ -1793,12 +1858,19 @@ static av_cold int dsp_init(AVCodecContext *avctx, AACEncContext *s)
 static av_cold int alloc_buffers(AVCodecContext *avctx, AACEncContext *s)
 {
     int ch;
-    if (!FF_ALLOCZ_TYPED_ARRAY(s->buffer.samples, s->channels * 3 * 1024) ||
+    int core_size = 3 * 1024;
+    int full_size = s->profile == AV_PROFILE_AAC_HE ? AAC_SBR_FULL_BUF_SIZE : 0;
+    int total_ch_size = core_size + full_size;
+
+    if (!FF_ALLOCZ_TYPED_ARRAY(s->buffer.samples, s->channels * total_ch_size) ||
         !FF_ALLOCZ_TYPED_ARRAY(s->cpe,            s->chan_map[0]))
         return AVERROR(ENOMEM);
 
-    for(ch = 0; ch < s->channels; ch++)
-        s->planar_samples[ch] = s->buffer.samples + 3 * 1024 * ch;
+    for (ch = 0; ch < s->channels; ch++) {
+        s->planar_samples[ch] = s->buffer.samples + total_ch_size * ch;
+        if (s->profile == AV_PROFILE_AAC_HE)
+            s->full_samples[ch] = s->planar_samples[ch] + core_size;
+    }
 
     if (s->options.coder == AAC_CODER_NMR) {
         s->nmr = av_mallocz(sizeof(*s->nmr));
@@ -1825,7 +1897,8 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
 {
     static AVOnce init_static_once = AV_ONCE_INIT;
     AACEncContext *s = avctx->priv_data;
-    int i, ret = 0;
+    int i, ret = 0, max_frame_bits, default_rate;
+    int64_t sbr_rate;
     int chcfg;
     const uint8_t *sizes[2];
     uint8_t grouping[AAC_MAX_CHANNELS];
@@ -1883,6 +1956,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         s->chan_map = aac_chan_configs[chcfg - 1];
     }
 
+    default_rate = !avctx->bit_rate;
     if (!avctx->bit_rate) {
         for (i = 1; i <= s->chan_map[0]; i++) {
             avctx->bit_rate += s->chan_map[i] == TYPE_CPE ? 128000 : /* Pair */
@@ -1890,25 +1964,6 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
                                                             69000  ; /* SCE  */
         }
     }
-
-    s->core_rate = avctx->sample_rate;
-
-    /* Samplerate */
-    for (int i = 0;; i++) {
-        av_assert1(i < 13);
-        if (avctx->sample_rate == ff_mpeg4audio_sample_rates[i]) {
-            s->samplerate_index = i;
-            break;
-        }
-    }
-
-    /* Bitrate limiting */
-    WARN_IF(1.0 * avctx->frame_size * avctx->bit_rate / avctx->sample_rate > 6144 * s->channels,
-             "Too many bits %f > %d per frame requested, clamping to max\n",
-             1.0 * avctx->frame_size * avctx->bit_rate / avctx->sample_rate,
-             6144 * s->channels);
-    avctx->bit_rate = (int64_t)FFMIN(6144 * s->channels / (double)avctx->frame_size * avctx->sample_rate,
-                                     avctx->bit_rate);
 
     /* Profile and option setting */
     avctx->profile = avctx->profile == AV_PROFILE_UNKNOWN ? AV_PROFILE_AAC_LOW :
@@ -1924,6 +1979,70 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         s->options.pns = 0;
     }
     s->profile = avctx->profile;
+
+    s->core_rate = avctx->sample_rate;
+    if (s->profile == AV_PROFILE_AAC_HE) {
+        int full_rate_idx = -1, core_rate_idx = -1;
+
+        if (avctx->ch_layout.nb_channels > 2) {
+            av_log(avctx, AV_LOG_ERROR,
+                   "HE-AAC is only supported for mono and stereo\n");
+            return AVERROR(EINVAL);
+        }
+        if (avctx->sample_rate < 16000 || avctx->sample_rate > 48000) {
+            av_log(avctx, AV_LOG_ERROR,
+                   "HE-AAC requires a sample rate between 16000 and 48000 Hz\n");
+            return AVERROR(EINVAL);
+        }
+        s->core_rate = avctx->sample_rate / 2;
+        for (i = 0; i < 13; i++) {
+            if (s->core_rate == ff_mpeg4audio_sample_rates[i])
+                core_rate_idx = i;
+            if (avctx->sample_rate == ff_mpeg4audio_sample_rates[i])
+                full_rate_idx = i;
+        }
+        if (core_rate_idx < 0 || full_rate_idx < 0) {
+            av_log(avctx, AV_LOG_ERROR, "Unsupported sample rate %d for HE-AAC\n",
+                   avctx->sample_rate);
+            return AVERROR(EINVAL);
+        }
+        avctx->frame_size      = 2048;
+        avctx->initial_padding = 2 * 1024 + AAC_SBR_ENC_EXTRA_DELAY;
+        s->samplerate_index    = core_rate_idx;
+        /* HE-AAC gets the same quality from about half the rate of AAC-LC */
+        if (default_rate)
+            avctx->bit_rate /= 2;
+        sbr_rate = avctx->bit_rate;
+        if ((avctx->flags & AV_CODEC_FLAG_QSCALE) && s->options.coder == AAC_CODER_NMR) {
+            /* the rate the quality ladder of the NMR coder gives, see below */
+            float q = avctx->global_quality > 0 ?
+                      avctx->global_quality / (float)FF_QP2LAMBDA : 1.0f;
+            sbr_rate = 66000 * powf(q, 0.29f) / 2 * s->channels;
+        }
+        s->sbr_ctx = ff_aac_sbr_enc_init(avctx->sample_rate, sbr_rate,
+                                         s->channels, full_rate_idx);
+        if (!s->sbr_ctx)
+            return AVERROR(ENOMEM);
+    } else {
+        for (i = 0;; i++) {
+            av_assert1(i < 13);
+            if (avctx->sample_rate == ff_mpeg4audio_sample_rates[i]) {
+                s->samplerate_index = i;
+                break;
+            }
+        }
+    }
+
+    /* Bitrate limiting. With HE-AAC a frame holds twice as many samples, so
+     * the nominal rate meets the limit of a frame at half the usual bitrate
+     * and the frames above the average no longer fit: keep a margin. */
+    max_frame_bits = s->sbr_ctx ? 6144 * s->channels * 3 / 4 : 6144 * s->channels;
+    WARN_IF(1.0 * avctx->frame_size * avctx->bit_rate / avctx->sample_rate > max_frame_bits,
+             "Too many bits %f > %d per frame requested, clamping to max\n",
+             1.0 * avctx->frame_size * avctx->bit_rate / avctx->sample_rate,
+             max_frame_bits);
+    avctx->bit_rate = (int64_t)FFMIN(max_frame_bits / (double)avctx->frame_size * avctx->sample_rate,
+                                     avctx->bit_rate);
 
     /* Coder limitations */
     s->coder = &ff_aac_coders[s->options.coder];
@@ -1973,9 +2092,17 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
         s->bandwidth = FFMIN(FFMAX(s->bandwidth, 8000), s->core_rate / 2);
     }
 
+    /* The decoder regenerates the spectrum above the SBR crossover, so the core
+     * must not code beyond it, and must reach it unless asked otherwise or a
+     * hole opens between the two. */
+    if (s->sbr_ctx) {
+        int xover = ff_aac_sbr_enc_get_crossover(s->sbr_ctx);
+        s->bandwidth = avctx->cutoff > 0 ? FFMIN(s->bandwidth, xover) : xover;
+    }
+
     if (!(avctx->flags & AV_CODEC_FLAG_QSCALE) && avctx->bit_rate > 0) {
         int bpc = avctx->bit_rate / avctx->ch_layout.nb_channels;
-        if (bpc <= 32000 && avctx->sample_rate > 32000)
+        if (bpc <= 32000 && avctx->sample_rate > 32000 && !s->sbr_ctx)
             av_log(avctx, AV_LOG_INFO,
                    "%d kb/s per channel at %d Hz: consider resampling the "
                    "input to 32000 Hz or lower for better quality.\n",

@@ -308,10 +308,11 @@ typedef struct AACEncContext {
     AVFloatDSPContext *fdsp;
     AACPCEInfo pce;                              ///< PCE data, if needed
     float *planar_samples[16];                   ///< saved preprocessed input
+    float *full_samples[16];                     ///< full rate samples buffer for HE-AAC
 
     int profile;                                 ///< copied from avctx
     int sbr_frame_bits;                          ///< size of the SBR payload of the frame being coded
-    int core_rate;                               ///< sample rate of the coded signal
+    int core_rate;                               ///< sample rate of the coded signal (half of avctx->sample_rate for HE-AAC)
     int needs_pce;                               ///< flag for non-standard layout
     int needs_height_ext;                        ///< flag for PCE height extension
     LPCContext lpc;                              ///< used by TNS
@@ -347,6 +348,7 @@ typedef struct AACEncContext {
 
     AACEncDSPContext aacdsp;
     AACNMRCurves *nmr;                            ///< NMR coder scratch (NULL unless coder == nmr)
+    struct AACEncSBRContext *sbr_ctx;             ///< SBR encoder context
 
     struct {
         float *samples;
