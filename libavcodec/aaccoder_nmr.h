@@ -734,7 +734,7 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
 {
     const int cstep = NMR_COARSE > 0 ? NMR_COARSE : NMR_STEP;
     int bch = ((avctx->flags & AV_CODEC_FLAG_QSCALE) ? 2.0f : avctx->ch_layout.nb_channels);
-    int destbits = avctx->bit_rate * 1024.0 / avctx->sample_rate / bch * (lambda / 120.f) * chans;
+    int destbits = AAC_FRAME_BITS(s, avctx) / bch * (lambda / 120.f) * chans;
     int is8_any = 0;
     float lam;
     float rc_off = 1.0f, lam_dem = 0.0f;
@@ -760,17 +760,17 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
                    (lambda / (avctx->global_quality ? avctx->global_quality : 120)) * chans;
     if (rc_global && s->psy.bitres.alloc >= 0) {
         /* CBR target: nominal + repayment, bounded +-30%/frame */
-        double rr = avctx->bit_rate * 1024.0 / avctx->sample_rate;
+        double rr = AAC_FRAME_BITS(s, avctx);
         destbits = (rr + av_clipd(s->nmr->rc_fill / 2.0, -0.3 * rr, 0.3 * rr)) * chans / s->channels;
     } else if (rc_eligible && s->psy.bitres.alloc >= 0) {
         /* pre-bootstrap CBR frames: target nominal (psy bitres is cold) */
-        destbits = (avctx->bit_rate * 1024.0 / avctx->sample_rate) * chans / s->channels;
+        destbits = (AAC_FRAME_BITS(s, avctx)) * chans / s->channels;
     }
-    destbits = FFMIN(destbits, 5800 * chans);
+    destbits = FFMIN(destbits, AAC_SOFT_FRAME_BITS(s) * chans);
     /* honest budget: subtract the measured non-trellis overhead (section data, ICS,
      * sf/PNS signalling), which is rate-dependent hence adaptive. */
     if (s->nmr->side_inited)
-        destbits = av_clip(destbits - (int)(s->nmr->side_ema * chans / s->channels), 64, 5800 * chans);
+        destbits = av_clip(destbits - (int)(s->nmr->side_ema * chans / s->channels), 64, AAC_SOFT_FRAME_BITS(s) * chans);
 
     /* Held transient burst, bank-aware: spend banked bits, never borrow deep
      * (payback troughs starve the next transient). */
@@ -868,7 +868,7 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
     } else if (rc_global) {
         /* corridor bisect around the servoed centre; pressure = stateless
          * rc_off multiplier (folding it into lam_rc winds up) */
-        float R = avctx->bit_rate * 1024.0 / avctx->sample_rate;
+        float R = AAC_FRAME_BITS(s, avctx);
         float cen;
         int tot, hardcap, rc_cap;
         float lo;
@@ -885,7 +885,7 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
         tot = 0;
         for (int k = 0; k < nsl; k++)
             tot += nmr_slot_bits(sl[k], s->nmr->nb[sl[k]->si], cstep);
-        hardcap = av_clip((int)(5800.f * FFMIN(1.f, lambda / 120.f)), 256, 5800) * chans;
+        hardcap = av_clip((int)((float)AAC_SOFT_FRAME_BITS(s) * FFMIN(1.f, lambda / 120.f)), 256, AAC_SOFT_FRAME_BITS(s)) * chans;
         /* legality cap only; no spend-floor (rc_off spends the bank) */
         rc_cap   = FFMIN(hardcap, (s->nmr->rc_fill + rc_rate_frame + rc_bmax) * chans / s->channels);
         if (tot > rc_cap) {
@@ -1037,7 +1037,7 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
          * at the reference lambda (the -q:a quality itself for VBR) and
          * only shrinks on an outer hard-overflow retry, so the retry
          * converges. */
-        int hardcap = av_clip((int)(5800.f * FFMIN(1.f, lambda / lam_ref)), 256, 5800) * chans;
+        int hardcap = av_clip((int)((float)AAC_SOFT_FRAME_BITS(s) * FFMIN(1.f, lambda / lam_ref)), 256, AAC_SOFT_FRAME_BITS(s)) * chans;
         int tot = 0;
         if (s->nmr->side_inited)
             hardcap = FFMAX(hardcap - (int)(FFMAX(s->nmr->side_ema, 0.0f) * chans / s->channels), 256);
@@ -1125,7 +1125,7 @@ static void nmr_solve_group(AVCodecContext *avctx, AACEncContext *s,
     if (rc_global) {
         /* reservoir cap on the fine grid (see the coarse-pass bound above),
          * then the quality slew limiter */
-        int hardcap = av_clip((int)(5800.f * FFMIN(1.f, lambda / 120.f)), 256, 5800) * chans;
+        int hardcap = av_clip((int)((float)AAC_SOFT_FRAME_BITS(s) * FFMIN(1.f, lambda / 120.f)), 256, AAC_SOFT_FRAME_BITS(s)) * chans;
         int tot = 0, rc_cap;
         for (int k = 0; k < nsl; k++)
             tot += nmr_slot_bits(sl[k], s->nmr->nb[sl[k]->si], NMR_STEP);
@@ -1357,8 +1357,8 @@ static void search_for_quantizers_nmr(AVCodecContext *avctx,
                       avctx->bit_rate_tolerance != 0 && s->options.rc == 0;
     /* Signed reservoir; soft steering (bounded repay + rc_off), hard cap =
      * legality only. */
-    int rc_rate_frame = avctx->bit_rate * 1024.0 / avctx->sample_rate;
-    int rc_bmax = FFMIN(FFMAX(6144 * s->channels - rc_rate_frame, 256), NMR_CBR_BUF * s->channels);
+    int rc_rate_frame = AAC_FRAME_BITS(s, avctx);
+    int rc_bmax = FFMIN(FFMAX(AAC_MAX_FRAME_BITS(s) - rc_rate_frame, 256), NMR_CBR_BUF * s->channels);
 
     int rc_global, defer;
     NMRSlot *t;

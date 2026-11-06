@@ -354,7 +354,7 @@ static void search_for_quantizers_fast(AVCodecContext *avctx, AACEncContext *s,
                                        const float lambda)
 {
     int start = 0, i, w, w2, g;
-    int destbits = avctx->bit_rate * 1024.0 / avctx->sample_rate / avctx->ch_layout.nb_channels * (lambda / 120.f);
+    int destbits = AAC_FRAME_BITS(s, avctx) / avctx->ch_layout.nb_channels * (lambda / 120.f);
     float dists[128] = { 0 }, uplims[128] = { 0 };
     float maxvals[128];
     int fflag, minscaler;
@@ -364,7 +364,7 @@ static void search_for_quantizers_fast(AVCodecContext *avctx, AACEncContext *s,
 
     // for values above this the decoder might end up in an endless loop
     // due to always having more bits than what can be encoded.
-    destbits = FFMIN(destbits, 5800);
+    destbits = FFMIN(destbits, AAC_SOFT_FRAME_BITS(s));
     //some heuristic to determine initial quantizers will reduce search time
     //determine zero bands and upper limits
     for (w = 0; w < sce->ics.num_windows; w += sce->ics.group_len[w]) {
