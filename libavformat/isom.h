@@ -224,6 +224,7 @@ typedef struct MOVStreamContext {
     unsigned int bytes_per_frame;
     unsigned int samples_per_frame;
     int dv_audio_container;
+    int sbr_priming_adjust; ///< samples to add to the priming, to the end padding they are taken off
     int pseudo_stream_id; ///< -1 means demux all ids
     int16_t audio_cid;    ///< stsd audio compression id
     unsigned drefs_count;
