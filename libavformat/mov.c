@@ -4830,6 +4830,12 @@ truncated:
 
     // Update av stream length, if it ends up shorter than the track's media duration
     st->duration = FFMIN(st->duration, edit_list_dts_entry_end - start_dts);
+    // skip_samples was counted in the units of the track timescale, which for
+    // SBR audio is the core sample rate, but it is used as a number of samples.
+    if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && st->codecpar->sample_rate > 0 &&
+        st->time_base.num == 1 && st->time_base.den != st->codecpar->sample_rate)
+        sti->skip_samples = av_rescale_q(sti->skip_samples, st->time_base,
+                                         (AVRational){ 1, st->codecpar->sample_rate });
     st->codecpar->initial_padding = sti->skip_samples;
 
     // Free the old index and the old CTTS structures
